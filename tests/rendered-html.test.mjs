@@ -28,6 +28,11 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /makeHarpString/);
   assert.match(page, /instrument\.number === 46/);
   assert.match(page, /className="global-playhead"/);
+  assert.match(page, /TIMBRE_STORAGE_KEY/);
+  assert.match(page, /window\.localStorage\.setItem/);
+  assert.match(page, /试听当前设置/);
+  assert.match(page, /saveTimbre/);
+  assert.match(page, /laneGeometry\.left/);
   assert.match(page, /mode: "sustained"/);
   assert.match(page, /noteOff \+ preset\.release/);
   assert.match(page, /setTargetAtTime\(0\.0001/);
@@ -37,6 +42,8 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.track-row/);
   assert.match(css, /\.transport-card \{ position: sticky/);
   assert.match(css, /\.global-playhead/);
+  assert.match(css, /\.timbre-panel/);
+  assert.match(css, /\.scrubber \{ position: absolute/);
   assert.match(css, /\.main-play/);
   assert.match(css, /\.edit-tools/);
   assert.doesNotMatch(page, /splitRegion|mergeRegions/);

@@ -38,6 +38,25 @@ type ActiveVoice = {
   sources: Set<AudioScheduledSourceNode>;
 };
 
+type SynthPreset = {
+  wave: OscillatorType;
+  second: OscillatorType;
+  detune: number;
+  filter: number;
+  filterEnd: number;
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+  level: number;
+  wet: number;
+  mode: "plucked" | "sustained" | "percussion";
+  kalimba: boolean;
+  harp?: boolean;
+};
+
+type TimbreSettings = Pick<SynthPreset, "attack" | "decay" | "sustain" | "release" | "filter" | "level" | "wet">;
+
 type Toast = {
   text: string;
   action?: { label: string; run: () => void };
@@ -48,6 +67,7 @@ const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", 
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
 
 function textScore(text: string) {
   const cjk = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
@@ -203,7 +223,7 @@ function makeHarpString(context: AudioContext, frequency: number, seconds: numbe
   return buffer;
 }
 
-function presetFor(track: Track) {
+function presetFor(track: Track): SynthPreset {
   const family = track.instrument.family;
   if (track.instrument.number === 0 && !track.instrument.percussion) {
     return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, filterEnd: 1100, attack: 0.0015, decay: 0.18, sustain: 0, release: 1.55, level: 0.105, wet: 0.2, mode: "plucked" as const, kalimba: true };
@@ -219,6 +239,35 @@ function presetFor(track: Track) {
   if (family === "brass" || family === "reed" || family === "pipe") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: -7, filter: 2200, filterEnd: 900, attack: 0.045, decay: 0.22, sustain: 0.76, release: 0.55, level: 0.055, wet: 0.11, mode: "sustained" as const, kalimba: false };
   if (family === "synth lead") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: 9, filter: 2900, filterEnd: 1050, attack: 0.01, decay: 0.15, sustain: 0.7, release: 0.35, level: 0.05, wet: 0.12, mode: "sustained" as const, kalimba: false };
   return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 6, filter: 2500, filterEnd: 820, attack: 0.018, decay: 0.2, sustain: 0.72, release: 0.48, level: 0.075, wet: 0.1, mode: "sustained" as const, kalimba: false };
+}
+
+function timbreKey(track: Track) {
+  return track.instrument.percussion ? "percussion" : `program-${track.instrument.number}`;
+}
+
+function editableSettings(preset: SynthPreset): TimbreSettings {
+  return {
+    attack: preset.attack,
+    decay: preset.decay,
+    sustain: preset.sustain,
+    release: preset.release,
+    filter: preset.filter,
+    level: preset.level,
+    wet: preset.wet,
+  };
+}
+
+function clampTimbre(settings: TimbreSettings): TimbreSettings {
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+  return {
+    attack: clamp(settings.attack, 0.001, 0.4),
+    decay: clamp(settings.decay, 0.03, 1.2),
+    sustain: clamp(settings.sustain, 0, 1),
+    release: clamp(settings.release, 0.08, 4),
+    filter: clamp(settings.filter, 300, 10000),
+    level: clamp(settings.level, 0.02, 0.2),
+    wet: clamp(settings.wet, 0, 0.5),
+  };
 }
 
 function instrumentLabel(track: Track) {
@@ -239,6 +288,9 @@ export default function Home() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [showTools, setShowTools] = useState(false);
   const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
+  const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
+  const [timbreTrackId, setTimbreTrackId] = useState<number | null>(null);
+  const [timbreDraft, setTimbreDraft] = useState<TimbreSettings | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const trackListRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<AudioGraph | null>(null);
@@ -251,6 +303,13 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(TIMBRE_STORAGE_KEY);
+      if (stored) setSavedTimbres(JSON.parse(stored) as Record<string, TimbreSettings>);
+    } catch {}
+  }, []);
 
   useEffect(() => {
     const list = trackListRef.current;
@@ -329,13 +388,28 @@ export default function Home() {
     return tracks.filter((track) => !track.muted && (!hasSolo || track.solo));
   }, []);
 
-  const triggerNote = useCallback((note: Track["notes"][number], track: UiTrack, delay: number) => {
+  const triggerNote = useCallback((
+    note: Track["notes"][number],
+    track: UiTrack,
+    delay: number,
+    previewSettings?: TimbreSettings,
+    previewDuration?: number,
+  ) => {
     const graph = ensureAudio();
     if (!graph) return;
     const { context, master, reverb } = graph;
-    const preset = presetFor(track.source);
+    const basePreset = presetFor(track.source);
+    const customSettings = previewSettings ?? savedTimbres[timbreKey(track.source)];
+    const normalizedSettings = customSettings ? clampTimbre(customSettings) : null;
+    const preset: SynthPreset = normalizedSettings
+      ? {
+          ...basePreset,
+          ...normalizedSettings,
+          filterEnd: Math.min(basePreset.filterEnd, normalizedSettings.filter * 0.45),
+        }
+      : basePreset;
     const start = context.currentTime + Math.max(0, delay);
-    const noteOff = start + Math.max(0.05, note.duration);
+    const noteOff = start + Math.max(0.05, previewDuration ?? note.duration);
     const end = preset.mode === "sustained" ? noteOff + preset.release : start + preset.release;
     const output = context.createGain();
     output.gain.value = 1;
@@ -357,7 +431,7 @@ export default function Home() {
     const frequency = track.source.instrument.percussion
       ? 58 + (note.midi % 12) * 11
       : 440 * 2 ** ((note.midi - 69) / 12);
-    const isHarp = "harp" in preset && preset.harp;
+    const isHarp = Boolean(preset.harp);
     const oscillators = isHarp
       ? []
       : preset.kalimba
@@ -432,7 +506,7 @@ export default function Home() {
       voicesRef.current.add(noiseVoice);
       noise.onended = () => voicesRef.current.delete(noiseVoice);
     }
-  }, [ensureAudio]);
+  }, [ensureAudio, savedTimbres]);
 
   const pause = useCallback(() => {
     setIsPlaying(false);
@@ -516,6 +590,8 @@ export default function Home() {
       setScaleDraft(firstKey.scale);
       setError("");
       setShowTools(false);
+      setTimbreTrackId(null);
+      setTimbreDraft(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法读取这个 MIDI 文件");
     } finally {
@@ -615,6 +691,51 @@ export default function Home() {
     });
   }
 
+  function openTimbrePanel(track: UiTrack) {
+    const base = editableSettings(presetFor(track.source));
+    const saved = savedTimbres[timbreKey(track.source)];
+    setTimbreTrackId(track.id);
+    setTimbreDraft(saved ? clampTimbre(saved) : base);
+  }
+
+  function previewTimbre() {
+    if (!project || timbreTrackId === null || !timbreDraft) return;
+    const track = project.tracks.find((item) => item.id === timbreTrackId);
+    if (!track || !track.source.notes.length) return;
+    const notes = [...track.source.notes].sort((a, b) => a.midi - b.midi);
+    const note = notes[Math.floor(notes.length / 2)];
+    stopVoices();
+    triggerNote(note, track, 0, timbreDraft, presetFor(track.source).mode === "sustained" ? 0.85 : 0.65);
+  }
+
+  function saveTimbre() {
+    if (!project || timbreTrackId === null || !timbreDraft) return;
+    const track = project.tracks.find((item) => item.id === timbreTrackId);
+    if (!track) return;
+    const key = timbreKey(track.source);
+    const settings = clampTimbre(timbreDraft);
+    const next = { ...savedTimbres, [key]: settings };
+    setSavedTimbres(next);
+    window.localStorage.setItem(TIMBRE_STORAGE_KEY, JSON.stringify(next));
+    setTimbreDraft(settings);
+    scheduledRef.current.clear();
+    notify({ text: `已永久保存 ${instrumentLabel(track.source)} 的音色` });
+  }
+
+  function resetTimbre() {
+    if (!project || timbreTrackId === null) return;
+    const track = project.tracks.find((item) => item.id === timbreTrackId);
+    if (!track) return;
+    const key = timbreKey(track.source);
+    const next = { ...savedTimbres };
+    delete next[key];
+    setSavedTimbres(next);
+    window.localStorage.setItem(TIMBRE_STORAGE_KEY, JSON.stringify(next));
+    setTimbreDraft(editableSettings(presetFor(track.source)));
+    scheduledRef.current.clear();
+    notify({ text: `已恢复 ${instrumentLabel(track.source)} 的默认音色` });
+  }
+
   function exportMidi() {
     if (!project) return;
     const exportCopy = project.midi.clone();
@@ -642,6 +763,8 @@ export default function Home() {
   }
 
   const progress = duration ? Math.min(100, (position / duration) * 100) : 0;
+  const timbreTrack = timbreTrackId === null ? null : project?.tracks.find((track) => track.id === timbreTrackId) ?? null;
+  const timbreMode = timbreTrack ? presetFor(timbreTrack.source).mode : null;
 
   return (
     <main className="studio-shell">
@@ -701,7 +824,10 @@ export default function Home() {
               {isPlaying ? "Ⅱ" : "▶"}
             </button>
             <div className="time-current">{formatTime(position)}</div>
-            <div className="scrubber">
+            <div
+              className="scrubber"
+              style={laneGeometry.width > 0 ? { left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` } : undefined}
+            >
               <div className="scrubber-fill" style={{ width: `${progress}%` }} />
               {project.midi.header.tempos.map((event, index) => (
                 <span className="event-marker tempo-marker" key={`tempo-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
@@ -769,10 +895,11 @@ export default function Home() {
               return (
                 <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
                   <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
-                  <div className="track-meta">
+                  <button className="track-meta" onClick={() => openTimbrePanel(track)} aria-label={`调节 ${instrumentLabel(track.source)} 音色`}>
                     <strong>{track.displayName}</strong>
                     <span>CH {track.source.channel + 1} · {instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
-                  </div>
+                    <em>{savedTimbres[timbreKey(track.source)] ? "已保存自定义音色 · 点击调节" : "点击调节音色"}</em>
+                  </button>
                   <div className="track-lane">
                     <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />
                     {track.source.notes.slice(0, 900).map((note, noteIndex) => (
@@ -802,6 +929,62 @@ export default function Home() {
       )}
 
       <input ref={inputRef} className="visually-hidden" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" onChange={(event) => loadFile(event.target.files?.[0])} />
+      {timbreTrack && timbreDraft && (
+        <div className="timbre-backdrop" onMouseDown={() => setTimbreTrackId(null)}>
+          <aside className="timbre-panel" role="dialog" aria-modal="true" aria-labelledby="timbre-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="timbre-titlebar">
+              <div>
+                <span>INSTRUMENT SOUND</span>
+                <h2 id="timbre-title">{instrumentLabel(timbreTrack.source)}</h2>
+                <p>Program {timbreTrack.source.instrument.number} · 保存后自动用于其他 MIDI</p>
+              </div>
+              <button aria-label="关闭音色面板" onClick={() => setTimbreTrackId(null)}>×</button>
+            </div>
+
+            <div className="timbre-controls">
+              <label>
+                <span>起音 <b>{Math.round(timbreDraft.attack * 1000)} ms</b></span>
+                <input type="range" min="0.001" max="0.4" step="0.001" value={timbreDraft.attack} onChange={(event) => setTimbreDraft({ ...timbreDraft, attack: Number(event.target.value) })} />
+              </label>
+              {timbreMode === "sustained" && (
+                <>
+                  <label>
+                    <span>衰减 <b>{timbreDraft.decay.toFixed(2)} s</b></span>
+                    <input type="range" min="0.03" max="1.2" step="0.01" value={timbreDraft.decay} onChange={(event) => setTimbreDraft({ ...timbreDraft, decay: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    <span>保持音量 <b>{Math.round(timbreDraft.sustain * 100)}%</b></span>
+                    <input type="range" min="0" max="1" step="0.01" value={timbreDraft.sustain} onChange={(event) => setTimbreDraft({ ...timbreDraft, sustain: Number(event.target.value) })} />
+                  </label>
+                </>
+              )}
+              <label>
+                <span>自然尾音 <b>{timbreDraft.release.toFixed(2)} s</b></span>
+                <input type="range" min="0.08" max="4" step="0.01" value={timbreDraft.release} onChange={(event) => setTimbreDraft({ ...timbreDraft, release: Number(event.target.value) })} />
+              </label>
+              <label>
+                <span>明亮度 <b>{Math.round(timbreDraft.filter)} Hz</b></span>
+                <input type="range" min="300" max="10000" step="50" value={timbreDraft.filter} onChange={(event) => setTimbreDraft({ ...timbreDraft, filter: Number(event.target.value) })} />
+              </label>
+              <label>
+                <span>音量 <b>{Math.round((timbreDraft.level / 0.2) * 100)}%</b></span>
+                <input type="range" min="0.02" max="0.2" step="0.002" value={timbreDraft.level} onChange={(event) => setTimbreDraft({ ...timbreDraft, level: Number(event.target.value) })} />
+              </label>
+              <label>
+                <span>空间感 <b>{Math.round(timbreDraft.wet * 200)}%</b></span>
+                <input type="range" min="0" max="0.5" step="0.01" value={timbreDraft.wet} onChange={(event) => setTimbreDraft({ ...timbreDraft, wet: Number(event.target.value) })} />
+              </label>
+            </div>
+
+            <div className="timbre-actions">
+              <button className="preview-timbre" onClick={previewTimbre}>▶ 试听当前设置</button>
+              <button onClick={resetTimbre}>恢复默认</button>
+              <button className="save-timbre" onClick={saveTimbre}>保存音色</button>
+            </div>
+            <p className="timbre-storage-note">音色保存在此浏览器中；同一 MIDI 乐器编号会自动调用。</p>
+          </aside>
+        </div>
+      )}
       {toast && (
         <div className="toast" role="status">
           <span>{toast.text}</span>
