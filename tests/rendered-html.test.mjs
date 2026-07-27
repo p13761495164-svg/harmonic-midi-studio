@@ -25,8 +25,10 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /Kalimba · Grand Piano map/);
   assert.match(page, /ratio: 2\.76/);
   assert.match(page, /decayScale: 0\.48/);
-  assert.match(page, /makeHarpString/);
   assert.match(page, /instrument\.number === 46/);
+  assert.match(page, /ratio: 4\.03/);
+  assert.match(page, /transposeKalimba: true/);
+  assert.match(page, /Kalimba · Orchestral Harp map/);
   assert.match(page, /className="global-playhead"/);
   assert.match(page, /TIMBRE_STORAGE_KEY/);
   assert.match(page, /window\.localStorage\.setItem/);

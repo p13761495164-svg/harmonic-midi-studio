@@ -9,7 +9,7 @@ A focused browser-based MIDI player with:
 - Per-track mute and solo
 - Per-track instrument-family synthesis with filters, reverb, and natural ADSR release tails
 - Acoustic Grand Piano is rendered with a bright kalimba-style resonator preset whose overtones decay independently
-- Orchestral Harp uses a dedicated plucked-string model instead of a generic oscillator preset
+- Orchestral Harp maps to the Transpose Piano-style kalimba preset with 1× / 4.03× partials, 4 ms attack and a 3-second decay
 - Sticky transport controls and a continuous playhead across the track lanes
 - Pixel-aligned transport scrubber and track playhead
 - Per-instrument timbre editor with live audition and browser-persistent presets

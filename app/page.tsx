@@ -52,7 +52,8 @@ type SynthPreset = {
   wet: number;
   mode: "plucked" | "sustained" | "percussion";
   kalimba: boolean;
-  harp?: boolean;
+  transposeKalimba?: boolean;
+  resonance?: number;
 };
 
 type TimbreSettings = Pick<SynthPreset, "attack" | "decay" | "sustain" | "release" | "filter" | "level" | "wet">;
@@ -207,29 +208,13 @@ function makeImpulse(context: AudioContext) {
   return impulse;
 }
 
-function makeHarpString(context: AudioContext, frequency: number, seconds: number) {
-  const length = Math.ceil(context.sampleRate * seconds);
-  const buffer = context.createBuffer(1, length, context.sampleRate);
-  const data = buffer.getChannelData(0);
-  const period = Math.max(2, Math.round(context.sampleRate / frequency));
-  for (let index = 0; index < Math.min(period, length); index++) {
-    const pickPosition = index / period;
-    const softPick = Math.sin(Math.PI * pickPosition);
-    data[index] = (Math.random() * 2 - 1) * softPick;
-  }
-  for (let index = period; index < length; index++) {
-    data[index] = (data[index - period] + data[index - period + 1]) * 0.497;
-  }
-  return buffer;
-}
-
 function presetFor(track: Track): SynthPreset {
   const family = track.instrument.family;
   if (track.instrument.number === 0 && !track.instrument.percussion) {
     return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, filterEnd: 1100, attack: 0.0015, decay: 0.18, sustain: 0, release: 1.55, level: 0.105, wet: 0.2, mode: "plucked" as const, kalimba: true };
   }
   if (track.instrument.number === 46 && !track.instrument.percussion) {
-    return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 6200, filterEnd: 900, attack: 0.002, decay: 0.12, sustain: 0, release: 2.65, level: 0.17, wet: 0.24, mode: "plucked" as const, kalimba: false, harp: true };
+    return { wave: "sine", second: "sine", detune: 0, filter: 5200, filterEnd: 900, attack: 0.004, decay: 0.18, sustain: 0, release: 3, level: 0.13, wet: 0.16, mode: "plucked", kalimba: true, transposeKalimba: true, resonance: 1.8 };
   }
   if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, filterEnd: 380, attack: 0.002, decay: 0.04, sustain: 0, release: 0.12, level: 0.1, wet: 0.03, mode: "percussion" as const, kalimba: false };
   if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, filterEnd: 650, attack: 0.004, decay: 0.16, sustain: 0, release: 1.7, level: 0.09, wet: 0.12, mode: "plucked" as const, kalimba: false };
@@ -271,9 +256,10 @@ function clampTimbre(settings: TimbreSettings): TimbreSettings {
 }
 
 function instrumentLabel(track: Track) {
-  return track.instrument.number === 0 && !track.instrument.percussion
-    ? "Kalimba · Grand Piano map"
-    : track.instrument.name;
+  if (track.instrument.percussion) return track.instrument.name;
+  if (track.instrument.number === 0) return "Kalimba · Grand Piano map";
+  if (track.instrument.number === 46) return "Kalimba · Orchestral Harp map";
+  return track.instrument.name;
 }
 
 export default function Home() {
@@ -422,7 +408,7 @@ export default function Home() {
       filter.frequency.setValueAtTime(Math.max(preset.filterEnd, preset.filter * 0.72), noteOff);
     }
     filter.frequency.exponentialRampToValueAtTime(preset.filterEnd, end);
-    filter.Q.value = track.source.instrument.percussion ? 0.3 : 0.8;
+    filter.Q.value = track.source.instrument.percussion ? 0.3 : (preset.resonance ?? 0.8);
     filter.connect(output);
     output.connect(master);
     const send = context.createGain();
@@ -431,9 +417,11 @@ export default function Home() {
     const frequency = track.source.instrument.percussion
       ? 58 + (note.midi % 12) * 11
       : 440 * 2 ** ((note.midi - 69) / 12);
-    const isHarp = Boolean(preset.harp);
-    const oscillators = isHarp
-      ? []
+    const oscillators = preset.transposeKalimba
+      ? [
+          { wave: "sine" as OscillatorType, ratio: 1, mix: 1, detune: 0, decayScale: 1 },
+          { wave: "sine" as OscillatorType, ratio: 4.03, mix: 0.3, detune: 0, decayScale: 1 },
+        ]
       : preset.kalimba
       ? [
           { wave: "sine" as OscillatorType, ratio: 1, mix: 0.68, detune: -1.5, decayScale: 1 },
@@ -446,21 +434,6 @@ export default function Home() {
         ];
     const voice: ActiveVoice = { gain: output, sources: new Set() };
     voicesRef.current.add(voice);
-    if (isHarp) {
-      const string = context.createBufferSource();
-      string.buffer = makeHarpString(context, frequency, preset.release);
-      const stringGain = context.createGain();
-      stringGain.gain.setValueAtTime(0.0001, start);
-      stringGain.gain.exponentialRampToValueAtTime(Math.max(0.0002, note.velocity * preset.level), start + preset.attack);
-      string.connect(stringGain).connect(filter);
-      string.start(start);
-      string.stop(end + 0.04);
-      voice.sources.add(string);
-      string.onended = () => {
-        voice.sources.delete(string);
-        if (!voice.sources.size) voicesRef.current.delete(voice);
-      };
-    }
     oscillators.forEach(({ wave, ratio, mix: mixLevel, detune, decayScale }) => {
       const oscillator = context.createOscillator();
       oscillator.type = wave;
