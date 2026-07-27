@@ -4,6 +4,7 @@ A focused browser-based MIDI player with:
 
 - Local `.mid` / `.midi` file import
 - Automatic track separation
+- Automatic recovery of UTF-8, GB18030/GBK, Big5 and Shift-JIS track-name mojibake
 - Play, pause and seek
 - Per-track mute and solo
 - Per-track instrument-family synthesis with filters and reverb

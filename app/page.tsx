@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 type UiTrack = {
   id: number;
   source: Track;
+  displayName: string;
   muted: boolean;
   solo: boolean;
   color: string;
@@ -43,6 +44,41 @@ const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A",
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 
+function textScore(text: string) {
+  const cjk = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
+  const punctuation = (text.match(/[（）《》【】、“”。，：；]/g) ?? []).length;
+  const replacements = (text.match(/\ufffd/g) ?? []).length;
+  const controls = (text.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g) ?? []).length;
+  return cjk * 6 + punctuation * 2 - replacements * 20 - controls * 8;
+}
+
+function repairMidiText(text: string) {
+  if (!text || [...text].some((character) => character.codePointAt(0)! > 255)) return text;
+  const bytes = Uint8Array.from([...text], (character) => character.charCodeAt(0));
+  let best = text;
+  let bestScore = textScore(text);
+  for (const encoding of ["utf-8", "gb18030", "big5", "shift_jis"]) {
+    try {
+      const decoded = new TextDecoder(encoding, { fatal: true }).decode(bytes).replace(/\0/g, "").trim();
+      const score = textScore(decoded);
+      if (score > bestScore) {
+        best = decoded;
+        bestScore = score;
+      }
+    } catch {}
+  }
+  return best;
+}
+
+function utf8ByteString(text: string) {
+  const bytes = new TextEncoder().encode(text);
+  let result = "";
+  for (let index = 0; index < bytes.length; index += 8192) {
+    result += String.fromCharCode(...bytes.subarray(index, index + 8192));
+  }
+  return result;
+}
+
 function detectKey(midi: Midi): KeyEvent {
   const histogram = Array(12).fill(0);
   midi.tracks.forEach((track) => track.notes.forEach((note) => {
@@ -67,6 +103,7 @@ function projectFromMidi(midi: Midi, name: string): MidiProject {
     tracks: playable.map((source, index) => ({
       id: index + 1,
       source,
+      displayName: repairMidiText(source.name) || source.instrument.name || `Track ${index + 1}`,
       muted: false,
       solo: false,
       color: TRACK_COLORS[index % TRACK_COLORS.length],
@@ -469,7 +506,7 @@ export default function Home() {
     setProject({ ...project, tracks: nextTracks });
     stopVoices();
     notify({
-      text: `已删除 “${target.source.name || target.source.instrument.name}”`,
+      text: `已删除 “${target.displayName}”`,
       action: {
         label: "撤销",
         run: () => {
@@ -485,7 +522,15 @@ export default function Home() {
 
   function exportMidi() {
     if (!project) return;
-    const bytes = project.midi.toArray();
+    const exportCopy = project.midi.clone();
+    exportCopy.name = utf8ByteString(repairMidiText(project.midi.name));
+    project.tracks.forEach((track) => {
+      const sourceIndex = project.midi.tracks.indexOf(track.source);
+      if (sourceIndex >= 0 && exportCopy.tracks[sourceIndex]) {
+        exportCopy.tracks[sourceIndex].name = utf8ByteString(track.displayName);
+      }
+    });
+    const bytes = exportCopy.toArray();
     const exportBuffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(exportBuffer).set(bytes);
     const blob = new Blob([exportBuffer], { type: "audio/midi" });
@@ -623,7 +668,7 @@ export default function Home() {
                 <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
                   <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
                   <div className="track-meta">
-                    <strong>{track.source.name || track.source.instrument.name}</strong>
+                    <strong>{track.displayName}</strong>
                     <span>CH {track.source.channel + 1} · {instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
                   </div>
                   <div className="track-lane">
@@ -643,9 +688,9 @@ export default function Home() {
                     <span className="lane-playhead" style={{ left: `${progress}%` }} />
                   </div>
                   <div className="track-controls">
-                    <button className={track.muted ? "active mute" : ""} aria-label={`${track.source.name} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>
-                    <button className={track.solo ? "active solo" : ""} aria-label={`${track.source.name} 独奏`} aria-pressed={track.solo} onClick={() => toggleTrack(track.id, "solo")}>S</button>
-                    <button className="delete-track" aria-label={`删除 ${track.source.name}`} onClick={() => deleteTrack(track.id)}>×</button>
+                    <button className={track.muted ? "active mute" : ""} aria-label={`${track.displayName} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>
+                    <button className={track.solo ? "active solo" : ""} aria-label={`${track.displayName} 独奏`} aria-pressed={track.solo} onClick={() => toggleTrack(track.id, "solo")}>S</button>
+                    <button className="delete-track" aria-label={`删除 ${track.displayName}`} onClick={() => deleteTrack(track.id)}>×</button>
                   </div>
                 </article>
               );
