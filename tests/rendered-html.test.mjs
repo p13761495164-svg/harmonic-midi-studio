@@ -30,6 +30,9 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /ratio: 4\.03/);
   assert.match(page, /customTimbre\.transposeKalimba/);
   assert.match(page, /effectiveCustom/);
+  assert.match(page, /colorForTimbre/);
+  assert.match(page, /background: timbreColor/);
+  assert.doesNotMatch(page, /TRACK_COLORS/);
   assert.match(page, /className="global-playhead"/);
   assert.match(page, /fetchInstruments/);
   assert.match(page, /favoriteTimbres/);

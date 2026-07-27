@@ -17,7 +17,6 @@ type UiTrack = {
   displayName: string;
   muted: boolean;
   solo: boolean;
-  color: string;
 };
 
 type MidiProject = {
@@ -75,7 +74,6 @@ type Toast = {
   action?: { label: string; run: () => void };
 };
 
-const TRACK_COLORS = ["#8c74ff", "#4fc8b7", "#f0a95a", "#ef6f8f", "#5da8ff", "#c781ef", "#76c86c", "#e3cb5f"];
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
@@ -145,7 +143,6 @@ function projectFromMidi(midi: Midi, name: string): MidiProject {
       displayName: repairMidiText(source.name) || source.instrument.name || `Track ${index + 1}`,
       muted: false,
       solo: false,
-      color: TRACK_COLORS[index % TRACK_COLORS.length],
     })),
     estimatedKey: detectKey(midi),
   };
@@ -187,6 +184,12 @@ function makeDemoProject() {
 function formatTime(seconds: number) {
   const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
   return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
+}
+
+function colorForTimbre(program: number, percussion = false) {
+  const colorId = percussion ? 128 : Math.max(0, Math.min(127, program));
+  const hue = (268 + colorId * 137.508) % 360;
+  return `hsl(${hue.toFixed(1)} 72% 66%)`;
 }
 
 function formatKey(event: KeyEvent) {
@@ -896,9 +899,10 @@ export default function Home() {
               const effectiveProgram = overrideProgram ?? track.source.instrument.number;
               const effectiveMapping = programMappings.find((mapping) => mapping.program === effectiveProgram);
               const effectiveCustom = customTimbres.find((item) => item.id === effectiveMapping?.customTimbreId);
+              const timbreColor = colorForTimbre(effectiveProgram, overrideProgram === undefined && track.source.instrument.percussion);
               return (
                 <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
-                  <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
+                  <div className="track-index" style={{ color: timbreColor }}>{String(index + 1).padStart(2, "0")}</div>
                   <div className="track-meta">
                     <button className="track-meta-open" onClick={() => { setTimbrePickerTrackId(track.id); setTimbrePickerFavoritesOnly(false); setTimbrePickerQuery(""); }} aria-label={`替换 ${instrumentLabel(track.source)} 音色`}>
                       <strong>{track.displayName}</strong>
@@ -907,7 +911,7 @@ export default function Home() {
                     </button>
                   </div>
                   <div className="track-lane">
-                    <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />
+                    <div className="track-progress" style={{ width: `${progress}%`, background: timbreColor }} />
                     {track.source.notes.slice(0, 900).map((note, noteIndex) => (
                       <i
                         key={noteIndex}
@@ -915,7 +919,7 @@ export default function Home() {
                           left: `${(note.time / duration) * 100}%`,
                           width: `${Math.max(0.18, (note.duration / duration) * 100)}%`,
                           bottom: `${8 + ((note.midi - minPitch) / range) * 70}%`,
-                          background: track.color,
+                          background: timbreColor,
                           opacity: 0.5 + note.velocity * 0.5,
                         }}
                       />
