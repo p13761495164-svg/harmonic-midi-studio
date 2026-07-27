@@ -81,6 +81,19 @@ export default function CustomTimbresPage() {
     setCreating(true);
   }
 
+  function duplicateCurrent() {
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      id: 0,
+      key: "",
+      name: `${draft.name} Copy`,
+      updatedAt: "",
+    });
+    setCreating(true);
+    setStatus("已复制当前音色，调整名称和参数后保存即可");
+  }
+
   async function save() {
     if (!draft) return;
     setSaving(true);
@@ -175,7 +188,7 @@ export default function CustomTimbresPage() {
             return (
               <button className={!creating && draft?.id === item.id ? "selected" : ""} key={item.id} onClick={() => choose(item)}>
                 <strong>{item.name}</strong>
-                <span>{item.engine === "kalimba" ? "KALIMBA ENGINE" : "STANDARD SYNTH"}</span>
+                <span>CUSTOM TIMBRE</span>
                 <small>{programs.length ? `映射到 ${programs.map((program) => `P${String(program).padStart(3, "0")}`).join(", ")}` : "尚未映射"}</small>
               </button>
             );
@@ -186,16 +199,17 @@ export default function CustomTimbresPage() {
           <section className="custom-editor">
             <div className="custom-editor-heading">
               <div><span>{creating ? "NEW CUSTOM TIMBRE" : draft.key}</span><h2>{draft.name}</h2><p>{mappedPrograms.length ? `当前映射：${mappedPrograms.map((program) => `P${String(program).padStart(3, "0")}`).join(", ")}` : "可在 GM 音色管理中建立映射"}</p></div>
-              {!creating && <button className="delete-custom" onClick={remove}>删除</button>}
+              <div className="custom-heading-actions">
+                {!creating && <button className="duplicate-custom" onClick={duplicateCurrent}>复制为新音色</button>}
+                {!creating && <button className="delete-custom" onClick={remove}>删除</button>}
+              </div>
             </div>
 
             <div className="custom-meta-grid">
               <label><span>名称</span><input value={draft.name} maxLength={96} onChange={(event) => change("name", event.target.value)} /></label>
-              <label><span>基础 GM 音色</span><select value={draft.baseProgram} onChange={(event) => change("baseProgram", Number(event.target.value))}>{instruments.map((item) => <option value={item.program} key={item.program}>{String(item.program + 1).padStart(3, "0")} · {item.name}</option>)}</select></label>
-              <label><span>合成引擎</span><select value={draft.engine} onChange={(event) => change("engine", event.target.value as CustomTimbre["engine"])}><option value="standard">Standard Synth</option><option value="kalimba">Kalimba Engine</option></select></label>
               <label className="custom-description"><span>说明</span><input value={draft.description} maxLength={240} onChange={(event) => change("description", event.target.value)} /></label>
-              {draft.engine === "kalimba" && <label className="custom-check"><input type="checkbox" checked={draft.transposeKalimba} onChange={(event) => change("transposeKalimba", event.target.checked)} /><span>使用 Transpose Piano 高泛音模式</span></label>}
             </div>
+            <p className="custom-simple-note">音色的发声结构由系统自动保留。只需试听并调整下面参数；要制作相似音色，可先“复制为新音色”。</p>
 
             <div className="cloud-parameter-grid">
               {([

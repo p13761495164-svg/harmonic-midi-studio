@@ -86,9 +86,13 @@ test("ships the Custom timbre library and persistent GM mappings", async () => {
 
   assert.match(manager, /Custom 音色列表/);
   assert.match(manager, /新建 Custom 音色/);
+  assert.match(manager, /复制为新音色/);
+  assert.match(manager, /发声结构由系统自动保留/);
   assert.match(manager, /saveCustomTimbre/);
   assert.match(manager, /deleteCustomTimbre/);
-  assert.match(manager, /Kalimba Engine/);
+  assert.doesNotMatch(manager, /基础 GM 音色/);
+  assert.doesNotMatch(manager, /合成引擎/);
+  assert.doesNotMatch(manager, /使用 Transpose Piano 高泛音模式/);
   assert.match(customApi, /harmonic_custom_timbres/);
   assert.match(mappingApi, /harmonic_program_mappings/);
   assert.match(bootstrap, /custom-mappings-v1/);
