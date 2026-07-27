@@ -2,6 +2,7 @@
 
 import { Midi, Track } from "@tonejs/midi";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CloudInstrument, fetchInstruments } from "./lib/timbres";
 
 type UiTrack = {
   id: number;
@@ -54,9 +55,13 @@ type SynthPreset = {
   kalimba: boolean;
   transposeKalimba?: boolean;
   resonance?: number;
+  harmonics?: number;
 };
 
-type TimbreSettings = Pick<SynthPreset, "attack" | "decay" | "sustain" | "release" | "filter" | "level" | "wet">;
+type TimbreSettings = Pick<SynthPreset, "attack" | "decay" | "sustain" | "release" | "filter" | "level" | "wet"> & {
+  resonance: number;
+  harmonics: number;
+};
 
 type Toast = {
   text: string;
@@ -69,6 +74,7 @@ const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A",
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
+const GM_FAMILY_IDS = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass", "reed", "pipe", "synth lead", "synth pad", "synth effects", "ethnic", "percussive", "sound effects"];
 
 function textScore(text: string) {
   const cjk = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
@@ -208,15 +214,17 @@ function makeImpulse(context: AudioContext) {
   return impulse;
 }
 
-function presetFor(track: Track): SynthPreset {
-  const family = track.instrument.family;
-  if (track.instrument.number === 0 && !track.instrument.percussion) {
+function presetFor(track: Track, programOverride?: number): SynthPreset {
+  const program = programOverride ?? track.instrument.number;
+  const percussion = programOverride === undefined && track.instrument.percussion;
+  const family = programOverride === undefined ? track.instrument.family : GM_FAMILY_IDS[Math.floor(program / 8)];
+  if (program === 0 && !percussion) {
     return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, filterEnd: 1100, attack: 0.0015, decay: 0.18, sustain: 0, release: 1.55, level: 0.105, wet: 0.2, mode: "plucked" as const, kalimba: true };
   }
-  if (track.instrument.number === 46 && !track.instrument.percussion) {
+  if (program === 46 && !percussion) {
     return { wave: "sine", second: "sine", detune: 0, filter: 5200, filterEnd: 900, attack: 0.004, decay: 0.18, sustain: 0, release: 3, level: 0.13, wet: 0.16, mode: "plucked", kalimba: true, transposeKalimba: true, resonance: 1.8 };
   }
-  if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, filterEnd: 380, attack: 0.002, decay: 0.04, sustain: 0, release: 0.12, level: 0.1, wet: 0.03, mode: "percussion" as const, kalimba: false };
+  if (percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, filterEnd: 380, attack: 0.002, decay: 0.04, sustain: 0, release: 0.12, level: 0.1, wet: 0.03, mode: "percussion" as const, kalimba: false };
   if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, filterEnd: 650, attack: 0.004, decay: 0.16, sustain: 0, release: 1.7, level: 0.09, wet: 0.12, mode: "plucked" as const, kalimba: false };
   if (family === "guitar") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 7, filter: 2900, filterEnd: 520, attack: 0.003, decay: 0.12, sustain: 0, release: 1.15, level: 0.085, wet: 0.08, mode: "plucked" as const, kalimba: false };
   if (family === "bass") return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: -5, filter: 920, filterEnd: 520, attack: 0.008, decay: 0.18, sustain: 0.7, release: 0.28, level: 0.1, wet: 0.03, mode: "sustained" as const, kalimba: false };
@@ -239,20 +247,38 @@ function editableSettings(preset: SynthPreset): TimbreSettings {
     filter: preset.filter,
     level: preset.level,
     wet: preset.wet,
+    resonance: preset.resonance ?? 0.8,
+    harmonics: preset.harmonics ?? 0.28,
   };
 }
 
 function clampTimbre(settings: TimbreSettings): TimbreSettings {
-  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+  const clamp = (value: number, min: number, max: number, fallback: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : fallback));
   return {
-    attack: clamp(settings.attack, 0.001, 0.4),
-    decay: clamp(settings.decay, 0.03, 1.2),
-    sustain: clamp(settings.sustain, 0, 1),
-    release: clamp(settings.release, 0.08, 4),
-    filter: clamp(settings.filter, 300, 10000),
-    level: clamp(settings.level, 0.02, 0.2),
-    wet: clamp(settings.wet, 0, 0.5),
+    attack: clamp(settings.attack, 0.001, 0.4, 0.018),
+    decay: clamp(settings.decay, 0.03, 1.2, 0.2),
+    sustain: clamp(settings.sustain, 0, 1, 0.72),
+    release: clamp(settings.release, 0.08, 4, 0.48),
+    filter: clamp(settings.filter, 300, 10000, 2500),
+    level: clamp(settings.level, 0.02, 0.2, 0.075),
+    wet: clamp(settings.wet, 0, 0.5, 0.1),
+    resonance: clamp(settings.resonance, 0.1, 12, 0.8),
+    harmonics: clamp(settings.harmonics, 0, 1.5, 0.28),
   };
+}
+
+function settingsFromCloud(instrument: CloudInstrument): TimbreSettings {
+  return clampTimbre({
+    attack: instrument.attack,
+    decay: instrument.decay,
+    sustain: instrument.sustain,
+    release: instrument.release,
+    filter: instrument.filter,
+    level: instrument.level,
+    wet: instrument.wet,
+    resonance: instrument.resonance,
+    harmonics: instrument.harmonics,
+  });
 }
 
 function instrumentLabel(track: Track) {
@@ -277,6 +303,8 @@ export default function Home() {
   const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
   const [timbreTrackId, setTimbreTrackId] = useState<number | null>(null);
   const [timbreDraft, setTimbreDraft] = useState<TimbreSettings | null>(null);
+  const [cloudInstruments, setCloudInstruments] = useState<CloudInstrument[]>([]);
+  const [trackTimbreOverrides, setTrackTimbreOverrides] = useState<Record<number, number>>({});
   const inputRef = useRef<HTMLInputElement | null>(null);
   const trackListRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<AudioGraph | null>(null);
@@ -295,6 +323,10 @@ export default function Home() {
       const stored = window.localStorage.getItem(TIMBRE_STORAGE_KEY);
       if (stored) setSavedTimbres(JSON.parse(stored) as Record<string, TimbreSettings>);
     } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchInstruments().then(setCloudInstruments).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -384,8 +416,12 @@ export default function Home() {
     const graph = ensureAudio();
     if (!graph) return;
     const { context, master, reverb } = graph;
-    const basePreset = presetFor(track.source);
-    const customSettings = previewSettings ?? savedTimbres[timbreKey(track.source)];
+    const programOverride = previewSettings ? undefined : trackTimbreOverrides[track.id];
+    const effectiveProgram = programOverride ?? track.source.instrument.number;
+    const cloudInstrument = cloudInstruments.find((instrument) => instrument.program === effectiveProgram);
+    const basePreset = presetFor(track.source, programOverride);
+    const customSettings = previewSettings
+      ?? (cloudInstrument ? settingsFromCloud(cloudInstrument) : savedTimbres[timbreKey(track.source)]);
     const normalizedSettings = customSettings ? clampTimbre(customSettings) : null;
     const preset: SynthPreset = normalizedSettings
       ? {
@@ -408,29 +444,29 @@ export default function Home() {
       filter.frequency.setValueAtTime(Math.max(preset.filterEnd, preset.filter * 0.72), noteOff);
     }
     filter.frequency.exponentialRampToValueAtTime(preset.filterEnd, end);
-    filter.Q.value = track.source.instrument.percussion ? 0.3 : (preset.resonance ?? 0.8);
+    filter.Q.value = preset.mode === "percussion" ? 0.3 : (preset.resonance ?? 0.8);
     filter.connect(output);
     output.connect(master);
     const send = context.createGain();
     send.gain.value = preset.wet;
     output.connect(send).connect(reverb);
-    const frequency = track.source.instrument.percussion
+    const frequency = preset.mode === "percussion"
       ? 58 + (note.midi % 12) * 11
       : 440 * 2 ** ((note.midi - 69) / 12);
     const oscillators = preset.transposeKalimba
       ? [
           { wave: "sine" as OscillatorType, ratio: 1, mix: 1, detune: 0, decayScale: 1 },
-          { wave: "sine" as OscillatorType, ratio: 4.03, mix: 0.3, detune: 0, decayScale: 1 },
+          { wave: "sine" as OscillatorType, ratio: 4.03, mix: preset.harmonics ?? 0.3, detune: 0, decayScale: 1 },
         ]
       : preset.kalimba
       ? [
           { wave: "sine" as OscillatorType, ratio: 1, mix: 0.68, detune: -1.5, decayScale: 1 },
-          { wave: "sine" as OscillatorType, ratio: 2.76, mix: 0.23, detune: 1, decayScale: 0.48 },
-          { wave: "sine" as OscillatorType, ratio: 5.4, mix: 0.09, detune: -2, decayScale: 0.22 },
+          { wave: "sine" as OscillatorType, ratio: 2.76, mix: (preset.harmonics ?? 0.32) * 0.72, detune: 1, decayScale: 0.48 },
+          { wave: "sine" as OscillatorType, ratio: 5.4, mix: (preset.harmonics ?? 0.32) * 0.28, detune: -2, decayScale: 0.22 },
         ]
       : [
           { wave: preset.wave, ratio: 1, mix: 0.72, detune: -preset.detune / 2, decayScale: 1 },
-          { wave: preset.second, ratio: track.source.instrument.percussion ? 1.9 : 1, mix: 0.28, detune: preset.detune, decayScale: preset.mode === "sustained" ? 1 : 0.62 },
+          { wave: preset.second, ratio: preset.mode === "percussion" ? 1.9 : 1, mix: preset.harmonics ?? 0.28, detune: preset.detune, decayScale: preset.mode === "sustained" ? 1 : 0.62 },
         ];
     const voice: ActiveVoice = { gain: output, sources: new Set() };
     voicesRef.current.add(voice);
@@ -463,7 +499,7 @@ export default function Home() {
         if (!voice.sources.size) voicesRef.current.delete(voice);
       };
     });
-    if (track.source.instrument.percussion) {
+    if (preset.mode === "percussion") {
       const buffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.08), context.sampleRate);
       const data = buffer.getChannelData(0);
       for (let index = 0; index < data.length; index++) data[index] = (Math.random() * 2 - 1) * (1 - index / data.length);
@@ -479,7 +515,7 @@ export default function Home() {
       voicesRef.current.add(noiseVoice);
       noise.onended = () => voicesRef.current.delete(noiseVoice);
     }
-  }, [ensureAudio, savedTimbres]);
+  }, [cloudInstruments, ensureAudio, savedTimbres, trackTimbreOverrides]);
 
   const pause = useCallback(() => {
     setIsPlaying(false);
@@ -543,6 +579,7 @@ export default function Home() {
     () => project?.tracks.reduce((sum, track) => sum + (track.source.controlChanges[64]?.length ?? 0), 0) ?? 0,
     [project],
   );
+  const favoriteTimbres = useMemo(() => cloudInstruments.filter((instrument) => instrument.favorite), [cloudInstruments]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -565,6 +602,7 @@ export default function Home() {
       setShowTools(false);
       setTimbreTrackId(null);
       setTimbreDraft(null);
+      setTrackTimbreOverrides({});
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法读取这个 MIDI 文件");
     } finally {
@@ -577,6 +615,17 @@ export default function Home() {
       ...current,
       tracks: current.tracks.map((track) => track.id === id ? { ...track, [kind]: !track[kind] } : track),
     } : current);
+    stopVoices();
+    scheduledRef.current.clear();
+  }
+
+  function changeTrackTimbre(id: number, value: string) {
+    setTrackTimbreOverrides((current) => {
+      const next = { ...current };
+      if (value === "") delete next[id];
+      else next[id] = Number(value);
+      return next;
+    });
     stopVoices();
     scheduledRef.current.clear();
   }
@@ -748,6 +797,7 @@ export default function Home() {
           <small>MIDI PLAYER</small>
         </div>
         <div className="header-actions">
+          <a className="manage-link" href="./timbres/">音色管理</a>
           {project && <button className="save-button" onClick={exportMidi}>↓ 另存为 MIDI</button>}
           <button className="import-small" onClick={() => inputRef.current?.click()}><span>＋</span> 导入 MIDI</button>
         </div>
@@ -776,6 +826,7 @@ export default function Home() {
             setKeyDraft("C");
             setScaleDraft("minor");
             setError("");
+            setTrackTimbreOverrides({});
           }}>或打开示例工程</button>
           <p className="privacy-note">支持 .mid / .midi · 文件只在浏览器本地读取</p>
           {error && <p className="error-message">{error}</p>}
@@ -865,14 +916,27 @@ export default function Home() {
               const minPitch = Math.min(...track.source.notes.map((note) => note.midi));
               const maxPitch = Math.max(...track.source.notes.map((note) => note.midi));
               const range = Math.max(1, maxPitch - minPitch);
+              const overrideProgram = trackTimbreOverrides[track.id];
+              const overrideTimbre = cloudInstruments.find((instrument) => instrument.program === overrideProgram);
               return (
                 <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
                   <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
-                  <button className="track-meta" onClick={() => openTimbrePanel(track)} aria-label={`调节 ${instrumentLabel(track.source)} 音色`}>
-                    <strong>{track.displayName}</strong>
-                    <span>CH {track.source.channel + 1} · {instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
-                    <em>{savedTimbres[timbreKey(track.source)] ? "已保存自定义音色 · 点击调节" : "点击调节音色"}</em>
-                  </button>
+                  <div className="track-meta">
+                    <button className="track-meta-open" onClick={() => openTimbrePanel(track)} aria-label={`调节 ${instrumentLabel(track.source)} 音色`}>
+                      <strong>{track.displayName}</strong>
+                      <span>CH {track.source.channel + 1} · {overrideTimbre?.name ?? instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
+                    </button>
+                    <select
+                      className="track-timbre-select"
+                      aria-label={`${track.displayName} 收藏音色`}
+                      value={overrideProgram ?? ""}
+                      onChange={(event) => changeTrackTimbre(track.id, event.target.value)}
+                    >
+                      <option value="">原始音色</option>
+                      {favoriteTimbres.map((instrument) => <option value={instrument.program} key={instrument.program}>★ {instrument.name}</option>)}
+                      {!favoriteTimbres.length && <option value="" disabled>请先在音色管理中收藏</option>}
+                    </select>
+                  </div>
                   <div className="track-lane">
                     <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />
                     {track.source.notes.slice(0, 900).map((note, noteIndex) => (

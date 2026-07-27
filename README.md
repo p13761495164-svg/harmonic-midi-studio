@@ -13,6 +13,9 @@ A focused browser-based MIDI player with:
 - Sticky transport controls and a continuous playhead across the track lanes
 - Pixel-aligned transport scrubber and track playhead
 - Per-instrument timbre editor with live audition and browser-persistent presets
+- PHP 8 + MySQL timbre library covering all 128 General MIDI programs
+- Cloud timbre manager with 1–2–3–4–5–6–7–1 audition, favorites, and admin-key protected saves
+- Per-track replacement from the shared favorite-timbre library
 - Current key and tempo display
 - Add tempo and key-signature events at the playhead
 - Delete tracks and remove all sustain-pedal (CC64) events
@@ -34,6 +37,8 @@ Open `http://localhost:3000`.
 ```bash
 npm run build
 npm run build:github
+npm run build:php
 ```
 
 The GitHub Pages workflow deploys the static export in `out/`.
+The PHP command creates a VPS-ready bundle in `php-dist/`; see `PHP_DEPLOY.md`.

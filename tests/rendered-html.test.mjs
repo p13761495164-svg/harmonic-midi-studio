@@ -34,6 +34,9 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /window\.localStorage\.setItem/);
   assert.match(page, /试听当前设置/);
   assert.match(page, /saveTimbre/);
+  assert.match(page, /fetchInstruments/);
+  assert.match(page, /favoriteTimbres/);
+  assert.match(page, /track-timbre-select/);
   assert.match(page, /laneGeometry\.left/);
   assert.match(page, /mode: "sustained"/);
   assert.match(page, /noteOff \+ preset\.release/);
@@ -49,4 +52,23 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.main-play/);
   assert.match(css, /\.edit-tools/);
   assert.doesNotMatch(page, /splitRegion|mergeRegions/);
+});
+
+test("ships the PHP and MySQL timbre manager", async () => {
+  const manager = await readFile(new URL("../app/timbres/page.tsx", import.meta.url), "utf8");
+  const api = await readFile(new URL("../php-server/api/instruments.php", import.meta.url), "utf8");
+  const bootstrap = await readFile(new URL("../php-server/api/bootstrap.php", import.meta.url), "utf8");
+  const schema = await readFile(new URL("../php-server/database.sql", import.meta.url), "utf8");
+  const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
+
+  assert.match(manager, /MIDI 音色管理/);
+  assert.match(manager, /试听 1 2 3 4 5 6 7 1/);
+  assert.match(manager, /永久保存到 MySQL/);
+  assert.match(manager, /favorite/);
+  assert.match(api, /require_admin/);
+  assert.match(api, /UPDATE instrument_presets/);
+  assert.match(bootstrap, /GM_NAMES/);
+  assert.match(bootstrap, /hash_equals/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS instrument_presets/);
+  assert.match(packageJson, /build:php/);
 });
