@@ -187,10 +187,29 @@ function makeImpulse(context: AudioContext) {
   return impulse;
 }
 
+function makeHarpString(context: AudioContext, frequency: number, seconds: number) {
+  const length = Math.ceil(context.sampleRate * seconds);
+  const buffer = context.createBuffer(1, length, context.sampleRate);
+  const data = buffer.getChannelData(0);
+  const period = Math.max(2, Math.round(context.sampleRate / frequency));
+  for (let index = 0; index < Math.min(period, length); index++) {
+    const pickPosition = index / period;
+    const softPick = Math.sin(Math.PI * pickPosition);
+    data[index] = (Math.random() * 2 - 1) * softPick;
+  }
+  for (let index = period; index < length; index++) {
+    data[index] = (data[index - period] + data[index - period + 1]) * 0.497;
+  }
+  return buffer;
+}
+
 function presetFor(track: Track) {
   const family = track.instrument.family;
   if (track.instrument.number === 0 && !track.instrument.percussion) {
     return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, filterEnd: 1100, attack: 0.0015, decay: 0.18, sustain: 0, release: 1.55, level: 0.105, wet: 0.2, mode: "plucked" as const, kalimba: true };
+  }
+  if (track.instrument.number === 46 && !track.instrument.percussion) {
+    return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 6200, filterEnd: 900, attack: 0.002, decay: 0.12, sustain: 0, release: 2.65, level: 0.17, wet: 0.24, mode: "plucked" as const, kalimba: false, harp: true };
   }
   if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, filterEnd: 380, attack: 0.002, decay: 0.04, sustain: 0, release: 0.12, level: 0.1, wet: 0.03, mode: "percussion" as const, kalimba: false };
   if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, filterEnd: 650, attack: 0.004, decay: 0.16, sustain: 0, release: 1.7, level: 0.09, wet: 0.12, mode: "plucked" as const, kalimba: false };
@@ -219,7 +238,9 @@ export default function Home() {
   const [scaleDraft, setScaleDraft] = useState<"major" | "minor">("major");
   const [toast, setToast] = useState<Toast | null>(null);
   const [showTools, setShowTools] = useState(false);
+  const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const trackListRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<AudioGraph | null>(null);
   const playbackStartRef = useRef(0);
   const positionStartRef = useRef(0);
@@ -230,6 +251,25 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
+
+  useEffect(() => {
+    const list = trackListRef.current;
+    const lane = list?.querySelector<HTMLElement>(".track-lane");
+    if (!list || !lane) {
+      setLaneGeometry({ left: 0, width: 0 });
+      return;
+    }
+    const update = () => {
+      const listRect = list.getBoundingClientRect();
+      const laneRect = lane.getBoundingClientRect();
+      setLaneGeometry({ left: laneRect.left - listRect.left, width: laneRect.width });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(list);
+    observer.observe(lane);
+    return () => observer.disconnect();
+  }, [project?.tracks.length]);
 
   const notify = useCallback((next: Toast) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -317,7 +357,10 @@ export default function Home() {
     const frequency = track.source.instrument.percussion
       ? 58 + (note.midi % 12) * 11
       : 440 * 2 ** ((note.midi - 69) / 12);
-    const oscillators = preset.kalimba
+    const isHarp = "harp" in preset && preset.harp;
+    const oscillators = isHarp
+      ? []
+      : preset.kalimba
       ? [
           { wave: "sine" as OscillatorType, ratio: 1, mix: 0.68, detune: -1.5, decayScale: 1 },
           { wave: "sine" as OscillatorType, ratio: 2.76, mix: 0.23, detune: 1, decayScale: 0.48 },
@@ -329,6 +372,21 @@ export default function Home() {
         ];
     const voice: ActiveVoice = { gain: output, sources: new Set() };
     voicesRef.current.add(voice);
+    if (isHarp) {
+      const string = context.createBufferSource();
+      string.buffer = makeHarpString(context, frequency, preset.release);
+      const stringGain = context.createGain();
+      stringGain.gain.setValueAtTime(0.0001, start);
+      stringGain.gain.exponentialRampToValueAtTime(Math.max(0.0002, note.velocity * preset.level), start + preset.attack);
+      string.connect(stringGain).connect(filter);
+      string.start(start);
+      string.stop(end + 0.04);
+      voice.sources.add(string);
+      string.onended = () => {
+        voice.sources.delete(string);
+        if (!voice.sources.size) voicesRef.current.delete(voice);
+      };
+    }
     oscillators.forEach(({ wave, ratio, mix: mixLevel, detune, decayScale }) => {
       const oscillator = context.createOscillator();
       oscillator.type = wave;
@@ -694,7 +752,14 @@ export default function Home() {
             <span>{audibleTracks(project.tracks).length} / {project.tracks.length} 正在发声</span>
           </div>
 
-          <div className="track-list">
+          <div className="track-list" ref={trackListRef}>
+            {laneGeometry.width > 0 && (
+              <span
+                className="global-playhead"
+                aria-hidden="true"
+                style={{ left: `${laneGeometry.left + laneGeometry.width * progress / 100}px` }}
+              />
+            )}
             {project.tracks.map((track, index) => {
               const hasSolo = project.tracks.some((item) => item.solo);
               const audible = !track.muted && (!hasSolo || track.solo);
@@ -722,7 +787,6 @@ export default function Home() {
                         }}
                       />
                     ))}
-                    <span className="lane-playhead" style={{ left: `${progress}%` }} />
                   </div>
                   <div className="track-controls">
                     <button className={track.muted ? "active mute" : ""} aria-label={`${track.displayName} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>

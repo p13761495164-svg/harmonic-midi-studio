@@ -25,6 +25,9 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /Kalimba · Grand Piano map/);
   assert.match(page, /ratio: 2\.76/);
   assert.match(page, /decayScale: 0\.48/);
+  assert.match(page, /makeHarpString/);
+  assert.match(page, /instrument\.number === 46/);
+  assert.match(page, /className="global-playhead"/);
   assert.match(page, /mode: "sustained"/);
   assert.match(page, /noteOff \+ preset\.release/);
   assert.match(page, /setTargetAtTime\(0\.0001/);
@@ -32,6 +35,8 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);
+  assert.match(css, /\.transport-card \{ position: sticky/);
+  assert.match(css, /\.global-playhead/);
   assert.match(css, /\.main-play/);
   assert.match(css, /\.edit-tools/);
   assert.doesNotMatch(page, /splitRegion|mergeRegions/);
