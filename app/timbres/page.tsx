@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CloudInstrument, fetchInstruments, updateInstrument } from "../lib/timbres";
+import {
+  CloudInstrument,
+  CustomTimbre,
+  ProgramMapping,
+  fetchCustomTimbres,
+  fetchInstruments,
+  fetchMappings,
+  updateInstrument,
+  updateMapping,
+} from "../lib/timbres";
 
 const PREVIEW_NOTES = [60, 62, 64, 65, 67, 69, 71, 72];
 
@@ -39,15 +48,19 @@ export default function TimbreManager() {
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [status, setStatus] = useState("正在连接 MySQL 音色库…");
   const [saving, setSaving] = useState(false);
+  const [customTimbres, setCustomTimbres] = useState<CustomTimbre[]>([]);
+  const [mappings, setMappings] = useState<ProgramMapping[]>([]);
   const audioRef = useRef<AudioContext | null>(null);
   const voicesRef = useRef<PreviewVoice[]>([]);
 
   useEffect(() => {
-    fetchInstruments()
-      .then((items) => {
+    Promise.all([fetchInstruments(), fetchCustomTimbres(), fetchMappings()])
+      .then(([items, customItems, mappingItems]) => {
         setInstruments(items);
+        setCustomTimbres(customItems);
+        setMappings(mappingItems);
         setDraft(items[0] ?? null);
-        setStatus(`已连接 · ${items.length} 个 GM 乐器`);
+        setStatus(`已连接 · ${items.length} 个 GM 乐器 · ${customItems.length} 个 Custom 音色`);
       })
       .catch((error) => setStatus(error instanceof Error ? error.message : "无法连接音色库"));
     return () => {
@@ -61,6 +74,8 @@ export default function TimbreManager() {
     const matchesQuery = `${instrument.program + 1} ${instrument.name} ${instrument.family}`.toLowerCase().includes(query.toLowerCase());
     return matchesQuery && (!favoriteOnly || instrument.favorite);
   }), [favoriteOnly, instruments, query]);
+  const selectedMapping = mappings.find((mapping) => mapping.program === selectedProgram);
+  const mappedCustom = customTimbres.find((item) => item.id === selectedMapping?.customTimbreId);
 
   function selectInstrument(instrument: CloudInstrument) {
     setSelectedProgram(instrument.program);
@@ -127,9 +142,7 @@ export default function TimbreManager() {
       envelope.connect(master);
       envelope.connect(reverb);
 
-      const partials = draft.program === 46
-        ? [{ ratio: 1, level: 1 }, { ratio: 4.03, level: draft.harmonics }]
-        : [{ ratio: 1, level: 1 }, { ratio: 2, level: draft.harmonics }];
+      const partials = [{ ratio: 1, level: 1 }, { ratio: 2, level: draft.harmonics }];
       partials.forEach((partial, partialIndex) => {
         const oscillator = context.createOscillator();
         const partialGain = context.createGain();
@@ -180,6 +193,21 @@ export default function TimbreManager() {
     }
   }
 
+  async function changeMapping(customTimbreId: number | null) {
+    if (!draft) return;
+    try {
+      const saved = await updateMapping(draft.program, customTimbreId);
+      setMappings((current) => [
+        ...current.filter((mapping) => mapping.program !== saved.program),
+        ...(saved.customTimbreId === null ? [] : [saved]),
+      ]);
+      const custom = customTimbres.find((item) => item.id === saved.customTimbreId);
+      setStatus(custom ? `已将 ${draft.name} 映射到 ${custom.name}` : `已解除 ${draft.name} 的 Custom 映射`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "映射保存失败");
+    }
+  }
+
   return (
     <main className="timbre-manager-shell">
       <header className="manager-header">
@@ -188,7 +216,7 @@ export default function TimbreManager() {
           <h1>MIDI 音色管理</h1>
           <p>{status}</p>
         </div>
-        <Link href="/">← 返回 MIDI 播放器</Link>
+        <nav><Link href="/custom-timbres/">Custom 音色</Link><Link href="/">← 返回播放器</Link></nav>
       </header>
 
       <section className="manager-layout">
@@ -202,7 +230,10 @@ export default function TimbreManager() {
               <div className={selectedProgram === instrument.program ? "selected" : ""} key={instrument.program}>
                 <button className="instrument-select" onClick={() => selectInstrument(instrument)}>
                   <span>{String(instrument.program + 1).padStart(3, "0")}</span>
-                  <span><strong>{instrument.name}</strong><small>{instrument.family}</small></span>
+                  <span>
+                    <strong>{instrument.name}</strong>
+                    <small>{mappings.some((mapping) => mapping.program === instrument.program) ? `CUSTOM MAP · ${instrument.family}` : instrument.family}</small>
+                  </span>
                 </button>
                 <button className={instrument.favorite ? "instrument-favorite active" : "instrument-favorite"} aria-label={instrument.favorite ? `取消收藏 ${instrument.name}` : `收藏 ${instrument.name}`} onClick={() => toggleFavorite(instrument)}>
                   {instrument.favorite ? "★" : "☆"}
@@ -216,10 +247,27 @@ export default function TimbreManager() {
         {draft ? (
           <section className="cloud-timbre-editor">
             <div className="cloud-editor-title">
-              <div><span>PROGRAM {draft.program + 1}</span><h2>{draft.name}</h2><p>{draft.family}</p></div>
+              <div>
+                <span>PROGRAM {String(draft.program + 1).padStart(3, "0")} · STANDARD GM</span>
+                <h2>{draft.name}</h2>
+                <p>{mappedCustom ? `当前播放映射：${mappedCustom.name}` : `${draft.family} · 当前使用标准 GM 合成音色`}</p>
+              </div>
               <button className={draft.favorite ? "favorite active" : "favorite"} onClick={() => toggleFavorite(draft)}>
                 {draft.favorite ? "★ 已收藏" : "☆ 收藏音色"}
               </button>
+            </div>
+
+            <div className={mappedCustom ? "mapping-control mapped" : "mapping-control"}>
+              <div>
+                <span>CUSTOM MAPPING</span>
+                <strong>{mappedCustom ? mappedCustom.name : "没有映射"}</strong>
+                <small>{mappedCustom ? `实际播放 Custom 音色；GM 名称仍保留为 ${draft.name}` : "实际播放此 GM 音色本身"}</small>
+              </div>
+              <select aria-label="Custom 音色映射" value={selectedMapping?.customTimbreId ?? ""} onChange={(event) => changeMapping(event.target.value ? Number(event.target.value) : null)}>
+                <option value="">不使用 Custom 映射</option>
+                {customTimbres.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+              </select>
+              {mappedCustom && <button onClick={() => changeMapping(null)}>解除映射</button>}
             </div>
 
             <div className="cloud-parameter-grid">
@@ -242,7 +290,7 @@ export default function TimbreManager() {
             </div>
 
             <div className="cloud-editor-actions">
-              <button className="scale-preview" onClick={previewScale}>▶ 试听 1 2 3 4 5 6 7 1</button>
+              <button className="scale-preview" onClick={previewScale}>▶ 试听标准 GM · 1 2 3 4 5 6 7 1</button>
               <button className="cloud-save" disabled={saving} onClick={save}>{saving ? "保存中…" : "永久保存到 MySQL"}</button>
             </div>
           </section>

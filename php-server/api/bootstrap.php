@@ -84,7 +84,10 @@ function db(): PDO
         respond(['error' => '无法连接 MySQL'], 503);
     }
     ensure_schema($pdo);
+    $hadLegacyPresets = (int)$pdo->query('SELECT COUNT(*) FROM harmonic_instrument_presets')->fetchColumn() > 0;
     seed_instruments($pdo);
+    seed_custom_timbres($pdo);
+    migrate_legacy_custom_mappings($pdo, $hadLegacyPresets);
     return $pdo;
 }
 
@@ -110,6 +113,44 @@ function ensure_schema(PDO $pdo): void
             INDEX idx_harmonic_instrument_family (family)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS harmonic_custom_timbres (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            custom_key VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+            name VARCHAR(96) NOT NULL,
+            description VARCHAR(240) NOT NULL DEFAULT \'\',
+            base_program TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            engine_key VARCHAR(24) CHARACTER SET ascii NOT NULL DEFAULT \'standard\',
+            transpose_kalimba TINYINT(1) NOT NULL DEFAULT 0,
+            attack DECIMAL(7,4) NOT NULL,
+            decay_seconds DECIMAL(7,4) NOT NULL,
+            sustain DECIMAL(6,4) NOT NULL,
+            release_seconds DECIMAL(7,4) NOT NULL,
+            brightness SMALLINT UNSIGNED NOT NULL,
+            resonance DECIMAL(6,3) NOT NULL,
+            harmonics DECIMAL(6,3) NOT NULL,
+            volume DECIMAL(6,4) NOT NULL,
+            reverb DECIMAL(6,4) NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_harmonic_custom_name (name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS harmonic_program_mappings (
+            program TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+            custom_timbre_id BIGINT UNSIGNED NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_harmonic_mapping_custom
+                FOREIGN KEY (custom_timbre_id) REFERENCES harmonic_custom_timbres(id)
+                ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS harmonic_schema_migrations (
+            migration_key VARCHAR(100) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+            applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
 }
 
 function defaults_for_program(int $program): array
@@ -119,11 +160,8 @@ function defaults_for_program(int $program): array
         'attack' => 0.018, 'decay' => 0.20, 'sustain' => 0.72, 'release' => 0.48,
         'brightness' => 2500, 'resonance' => 0.8, 'harmonics' => 0.28, 'volume' => 0.075, 'reverb' => 0.10,
     ];
-    if ($program === 0) {
-        return ['attack' => 0.0015, 'decay' => 0.18, 'sustain' => 0, 'release' => 1.55, 'brightness' => 7600, 'resonance' => 0.8, 'harmonics' => 0.32, 'volume' => 0.105, 'reverb' => 0.20];
-    }
     if ($program === 46) {
-        return ['attack' => 0.004, 'decay' => 0.18, 'sustain' => 0, 'release' => 3.0, 'brightness' => 5200, 'resonance' => 1.8, 'harmonics' => 0.30, 'volume' => 0.13, 'reverb' => 0.16];
+        return ['attack' => 0.006, 'decay' => 0.18, 'sustain' => 0, 'release' => 2.40, 'brightness' => 3600, 'resonance' => 1.1, 'harmonics' => 0.22, 'volume' => 0.085, 'reverb' => 0.16];
     }
     if ($family === 0 || $family === 1 || $family === 3 || $family === 13) {
         return ['attack' => 0.004, 'decay' => 0.16, 'sustain' => 0, 'release' => 1.45, 'brightness' => 4200, 'resonance' => 0.8, 'harmonics' => 0.30, 'volume' => 0.09, 'reverb' => 0.12];
@@ -141,6 +179,99 @@ function defaults_for_program(int $program): array
         return ['attack' => 0.01, 'decay' => 0.15, 'sustain' => 0.70, 'release' => 0.35, 'brightness' => 2900, 'resonance' => 0.8, 'harmonics' => 0.38, 'volume' => 0.05, 'reverb' => 0.12];
     }
     return $defaults;
+}
+
+function seed_custom_timbres(PDO $pdo): void
+{
+    $check = $pdo->prepare('SELECT 1 FROM harmonic_schema_migrations WHERE migration_key = ?');
+    $check->execute(['custom-mappings-v1']);
+    if ($check->fetchColumn()) {
+        return;
+    }
+    $statement = $pdo->prepare(
+        'INSERT IGNORE INTO harmonic_custom_timbres
+        (custom_key, name, description, base_program, engine_key, transpose_kalimba,
+         attack, decay_seconds, sustain, release_seconds, brightness, resonance, harmonics, volume, reverb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    $statement->execute([
+        'kalimba-grand-piano', 'Kalimba · Grand Piano', 'Color Piano 风格的卡林巴映射',
+        0, 'kalimba', 0, 0.0015, 0.18, 0, 1.55, 7600, 0.8, 0.32, 0.105, 0.20,
+    ]);
+    $statement->execute([
+        'kalimba-orchestral-harp', 'Kalimba · Orchestral Harp', 'Transpose Piano 风格的高泛音卡林巴映射',
+        46, 'kalimba', 1, 0.004, 0.18, 0, 3.0, 5200, 1.8, 0.30, 0.13, 0.16,
+    ]);
+}
+
+function migrate_legacy_custom_mappings(PDO $pdo, bool $hadLegacyPresets): void
+{
+    $migrationKey = 'custom-mappings-v1';
+    $check = $pdo->prepare('SELECT 1 FROM harmonic_schema_migrations WHERE migration_key = ?');
+    $check->execute([$migrationKey]);
+    if ($check->fetchColumn()) {
+        return;
+    }
+
+    $pdo->beginTransaction();
+    try {
+        if ($hadLegacyPresets) {
+            $pdo->exec(
+                'UPDATE harmonic_custom_timbres custom
+                 JOIN harmonic_instrument_presets preset ON preset.program = 0
+                 SET custom.attack = preset.attack,
+                     custom.decay_seconds = preset.decay_seconds,
+                     custom.sustain = preset.sustain,
+                     custom.release_seconds = preset.release_seconds,
+                     custom.brightness = preset.brightness,
+                     custom.resonance = preset.resonance,
+                     custom.harmonics = preset.harmonics,
+                     custom.volume = preset.volume,
+                     custom.reverb = preset.reverb
+                 WHERE custom.custom_key = \'kalimba-grand-piano\''
+            );
+            $pdo->exec(
+                'UPDATE harmonic_custom_timbres custom
+                 JOIN harmonic_instrument_presets preset ON preset.program = 46
+                 SET custom.attack = preset.attack,
+                     custom.decay_seconds = preset.decay_seconds,
+                     custom.sustain = preset.sustain,
+                     custom.release_seconds = preset.release_seconds,
+                     custom.brightness = preset.brightness,
+                     custom.resonance = preset.resonance,
+                     custom.harmonics = preset.harmonics,
+                     custom.volume = preset.volume,
+                     custom.reverb = preset.reverb
+                 WHERE custom.custom_key = \'kalimba-orchestral-harp\''
+            );
+        }
+        $pdo->exec(
+            'UPDATE harmonic_instrument_presets SET
+                attack = 0.004, decay_seconds = 0.16, sustain = 0, release_seconds = 1.70,
+                brightness = 4200, resonance = 0.8, harmonics = 0.28, volume = 0.09, reverb = 0.12
+             WHERE program = 0'
+        );
+        $pdo->exec(
+            'UPDATE harmonic_instrument_presets SET
+                attack = 0.006, decay_seconds = 0.18, sustain = 0, release_seconds = 2.40,
+                brightness = 3600, resonance = 1.1, harmonics = 0.22, volume = 0.085, reverb = 0.16
+             WHERE program = 46'
+        );
+        $pdo->exec(
+            'INSERT IGNORE INTO harmonic_program_mappings (program, custom_timbre_id)
+             SELECT 0, id FROM harmonic_custom_timbres WHERE custom_key = \'kalimba-grand-piano\''
+        );
+        $pdo->exec(
+            'INSERT IGNORE INTO harmonic_program_mappings (program, custom_timbre_id)
+             SELECT 46, id FROM harmonic_custom_timbres WHERE custom_key = \'kalimba-orchestral-harp\''
+        );
+        $insert = $pdo->prepare('INSERT INTO harmonic_schema_migrations (migration_key) VALUES (?)');
+        $insert->execute([$migrationKey]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        $pdo->rollBack();
+        throw $error;
+    }
 }
 
 function seed_instruments(PDO $pdo): void
@@ -180,6 +311,29 @@ function preset_payload(array $row): array
         'level' => (float)$row['volume'],
         'wet' => (float)$row['reverb'],
         'favorite' => (bool)$row['is_favorite'],
+        'updatedAt' => $row['updated_at'],
+    ];
+}
+
+function custom_timbre_payload(array $row): array
+{
+    return [
+        'id' => (int)$row['id'],
+        'key' => $row['custom_key'],
+        'name' => $row['name'],
+        'description' => $row['description'],
+        'baseProgram' => (int)$row['base_program'],
+        'engine' => $row['engine_key'],
+        'transposeKalimba' => (bool)$row['transpose_kalimba'],
+        'attack' => (float)$row['attack'],
+        'decay' => (float)$row['decay_seconds'],
+        'sustain' => (float)$row['sustain'],
+        'release' => (float)$row['release_seconds'],
+        'filter' => (int)$row['brightness'],
+        'resonance' => (float)$row['resonance'],
+        'harmonics' => (float)$row['harmonics'],
+        'level' => (float)$row['volume'],
+        'wet' => (float)$row['reverb'],
         'updatedAt' => $row['updated_at'],
     ];
 }

@@ -22,13 +22,14 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /TextDecoder\(encoding/);
   assert.match(page, /utf8ByteString/);
   assert.match(page, /displayName/);
-  assert.match(page, /Kalimba · Grand Piano map/);
+  assert.match(page, /fetchCustomTimbres/);
+  assert.match(page, /fetchMappings/);
   assert.match(page, /ratio: 2\.76/);
   assert.match(page, /decayScale: 0\.48/);
-  assert.match(page, /instrument\.number === 46/);
+  assert.match(page, /program === 46/);
   assert.match(page, /ratio: 4\.03/);
-  assert.match(page, /transposeKalimba: true/);
-  assert.match(page, /Kalimba · Orchestral Harp map/);
+  assert.match(page, /customTimbre\.transposeKalimba/);
+  assert.match(page, /effectiveCustom/);
   assert.match(page, /className="global-playhead"/);
   assert.match(page, /fetchInstruments/);
   assert.match(page, /favoriteTimbres/);
@@ -60,11 +61,13 @@ test("ships the PHP and MySQL timbre manager", async () => {
   const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
 
   assert.match(manager, /MIDI 音色管理/);
-  assert.match(manager, /试听 1 2 3 4 5 6 7 1/);
+  assert.match(manager, /试听标准 GM/);
   assert.match(manager, /永久保存到 MySQL/);
   assert.match(manager, /favorite/);
   assert.match(manager, /toggleFavorite/);
   assert.match(manager, /await updateInstrument\(next\)/);
+  assert.match(manager, /解除映射/);
+  assert.match(manager, /updateMapping/);
   assert.doesNotMatch(api, /require_admin/);
   assert.doesNotMatch(manager, /管理密钥/);
   assert.match(api, /UPDATE harmonic_instrument_presets/);
@@ -72,4 +75,24 @@ test("ships the PHP and MySQL timbre manager", async () => {
   assert.match(bootstrap, /shared\/database\.php/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS harmonic_instrument_presets/);
   assert.match(packageJson, /build:php/);
+});
+
+test("ships the Custom timbre library and persistent GM mappings", async () => {
+  const manager = await readFile(new URL("../app/custom-timbres/page.tsx", import.meta.url), "utf8");
+  const customApi = await readFile(new URL("../php-server/api/custom-timbres.php", import.meta.url), "utf8");
+  const mappingApi = await readFile(new URL("../php-server/api/mappings.php", import.meta.url), "utf8");
+  const bootstrap = await readFile(new URL("../php-server/api/bootstrap.php", import.meta.url), "utf8");
+  const schema = await readFile(new URL("../php-server/database.sql", import.meta.url), "utf8");
+
+  assert.match(manager, /Custom 音色列表/);
+  assert.match(manager, /新建 Custom 音色/);
+  assert.match(manager, /saveCustomTimbre/);
+  assert.match(manager, /deleteCustomTimbre/);
+  assert.match(manager, /Kalimba Engine/);
+  assert.match(customApi, /harmonic_custom_timbres/);
+  assert.match(mappingApi, /harmonic_program_mappings/);
+  assert.match(bootstrap, /custom-mappings-v1/);
+  assert.match(bootstrap, /kalimba-orchestral-harp/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS harmonic_custom_timbres/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS harmonic_program_mappings/);
 });

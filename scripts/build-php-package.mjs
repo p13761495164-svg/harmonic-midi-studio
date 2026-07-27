@@ -13,6 +13,7 @@ await cp(resolve(root, "php-server", "api"), resolve(appTarget, "api"), { recurs
 await cp(resolve(root, "php-server", "public.htaccess"), resolve(appTarget, ".htaccess"));
 await cp(resolve(root, "php-server", "static-index.php"), resolve(appTarget, "index.php"));
 await cp(resolve(root, "php-server", "static-index.php"), resolve(appTarget, "timbres", "index.php"));
+await cp(resolve(root, "php-server", "static-index.php"), resolve(appTarget, "custom-timbres", "index.php"));
 await cp(resolve(root, "php-server", "database.sql"), resolve(target, "database.sql"));
 await cp(resolve(root, "PHP_DEPLOY.md"), resolve(target, "README.md"));
 
