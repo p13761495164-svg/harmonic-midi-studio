@@ -1,471 +1,525 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-type Region = {
+type MidiNote = {
+  midi: number;
+  velocity: number;
+  start: number;
+  duration: number;
+};
+
+type MidiTrack = {
   id: number;
   name: string;
-  start: number;
-  length: number;
+  channel: number;
+  program: number;
+  notes: MidiNote[];
+  muted: boolean;
+  solo: boolean;
   color: string;
 };
 
-type Note = {
-  id: number;
-  pitch: number;
-  start: number;
-  length: number;
-  velocity: number;
+type MidiProject = {
+  name: string;
+  duration: number;
+  bpm: number;
+  tracks: MidiTrack[];
 };
 
-type TempoEvent = { beat: number; bpm: number };
-type KeyEvent = { beat: number; root: number; mode: "Major" | "Minor" };
+type RawNote = {
+  midi: number;
+  velocity: number;
+  startTick: number;
+  endTick: number;
+};
 
-const TOTAL_BEATS = 32;
-const KEYS = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
-const PITCHES = Array.from({ length: 25 }, (_, index) => 72 - index);
-const SCALE_MAJOR = [0, 2, 4, 5, 7, 9, 11];
-const SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10];
-const DEGREE_NAMES = ["1", "2", "3", "4", "5", "6", "7"];
+type ParsedTrack = {
+  name: string;
+  channel: number;
+  program: number;
+  notes: RawNote[];
+};
 
-const initialRegions: Region[] = [
-  { id: 1, name: "VERSE · MIDI", start: 0, length: 8, color: "#8568ff" },
-  { id: 2, name: "PRE · MIDI", start: 8, length: 8, color: "#5b72f2" },
-  { id: 3, name: "CHORUS · MIDI", start: 16, length: 12, color: "#ba63ea" },
+const TRACK_COLORS = ["#8c74ff", "#4fc8b7", "#f0a95a", "#ef6f8f", "#5da8ff", "#c781ef", "#76c86c", "#e3cb5f"];
+const GM_NAMES = [
+  "Acoustic Grand", "Bright Piano", "Electric Grand", "Honky-tonk", "Electric Piano", "Electric Piano 2", "Harpsichord", "Clavinet",
+  "Celesta", "Glockenspiel", "Music Box", "Vibraphone", "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
+  "Drawbar Organ", "Percussive Organ", "Rock Organ", "Church Organ", "Reed Organ", "Accordion", "Harmonica", "Tango Accordion",
+  "Nylon Guitar", "Steel Guitar", "Jazz Guitar", "Clean Guitar", "Muted Guitar", "Overdriven Guitar", "Distortion Guitar", "Guitar Harmonics",
+  "Acoustic Bass", "Finger Bass", "Pick Bass", "Fretless Bass", "Slap Bass", "Slap Bass 2", "Synth Bass", "Synth Bass 2",
+  "Violin", "Viola", "Cello", "Contrabass", "Tremolo Strings", "Pizzicato Strings", "Harp", "Timpani",
+  "Strings", "Slow Strings", "Synth Strings", "Synth Strings 2", "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
+  "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn", "Brass Section", "Synth Brass", "Synth Brass 2",
+  "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet",
+  "Piccolo", "Flute", "Recorder", "Pan Flute", "Bottle", "Shakuhachi", "Whistle", "Ocarina",
+  "Lead 1", "Lead 2", "Lead 3", "Lead 4", "Lead 5", "Lead 6", "Lead 7", "Lead 8",
+  "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Pad 5", "Pad 6", "Pad 7", "Pad 8",
+  "FX 1", "FX 2", "FX 3", "FX 4", "FX 5", "FX 6", "FX 7", "FX 8",
+  "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bag Pipe", "Fiddle", "Shanai",
+  "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock", "Taiko", "Melodic Tom", "Synth Drum", "Reverse Cymbal",
+  "Guitar Fret", "Breath", "Seashore", "Bird", "Telephone", "Helicopter", "Applause", "Gunshot",
 ];
 
-const initialNotes: Note[] = [
-  { id: 1, pitch: 60, start: 0, length: 1.5, velocity: 91 },
-  { id: 2, pitch: 64, start: 2, length: 1.5, velocity: 96 },
-  { id: 3, pitch: 67, start: 4, length: 1, velocity: 87 },
-  { id: 4, pitch: 69, start: 5.5, length: 2, velocity: 102 },
-  { id: 5, pitch: 67, start: 8, length: 1.5, velocity: 82 },
-  { id: 6, pitch: 71, start: 10, length: 1.5, velocity: 94 },
-  { id: 7, pitch: 72, start: 12, length: 3, velocity: 108 },
-  { id: 8, pitch: 64, start: 16, length: 2, velocity: 92 },
-  { id: 9, pitch: 67, start: 18.5, length: 1, velocity: 86 },
-  { id: 10, pitch: 72, start: 20, length: 2, velocity: 110 },
-  { id: 11, pitch: 71, start: 22.5, length: 1.5, velocity: 98 },
-  { id: 12, pitch: 69, start: 24.5, length: 3, velocity: 93 },
-];
+const demoProject: MidiProject = {
+  name: "Midnight Sketch.mid",
+  duration: 18.4,
+  bpm: 112,
+  tracks: [
+    { id: 1, name: "Electric Piano", channel: 1, program: 4, muted: false, solo: false, color: TRACK_COLORS[0], notes: makeDemoNotes(48, 0, 16, 0.72) },
+    { id: 2, name: "Warm Bass", channel: 2, program: 38, muted: false, solo: false, color: TRACK_COLORS[1], notes: makeDemoNotes(36, 0.2, 12, 1.05) },
+    { id: 3, name: "Soft Drums", channel: 10, program: 0, muted: false, solo: false, color: TRACK_COLORS[2], notes: makeDemoNotes(42, 0, 32, 0.12) },
+    { id: 4, name: "Air Pad", channel: 3, program: 89, muted: false, solo: false, color: TRACK_COLORS[3], notes: makeDemoNotes(60, 1, 8, 1.8) },
+  ],
+};
 
-function bpmAt(beat: number, events: TempoEvent[]) {
-  return [...events].reverse().find((event) => event.beat <= beat)?.bpm ?? 120;
+function makeDemoNotes(base: number, offset: number, count: number, duration: number): MidiNote[] {
+  return Array.from({ length: count }, (_, index) => ({
+    midi: base + [0, 4, 7, 9, 7, 4][index % 6],
+    velocity: 0.45 + (index % 4) * 0.11,
+    start: offset + index * (18 / count),
+    duration,
+  }));
 }
 
-function keyAt(beat: number, events: KeyEvent[]) {
-  return [...events].reverse().find((event) => event.beat <= beat) ?? events[0];
+function readVariable(view: DataView, cursor: { value: number }) {
+  let result = 0;
+  let byte = 0;
+  do {
+    byte = view.getUint8(cursor.value++);
+    result = (result << 7) | (byte & 0x7f);
+  } while (byte & 0x80);
+  return result;
 }
 
-function noteName(midi: number) {
-  return `${KEYS[midi % 12]}${Math.floor(midi / 12) - 1}`;
+function readText(view: DataView, start: number, length: number) {
+  const bytes = new Uint8Array(view.buffer, view.byteOffset + start, length);
+  return new TextDecoder("utf-8").decode(bytes).replace(/\0/g, "").trim();
 }
 
-function degreeFor(pitch: number, key: KeyEvent) {
-  const scale = key.mode === "Major" ? SCALE_MAJOR : SCALE_MINOR;
-  const interval = (pitch - key.root + 120) % 12;
-  const degree = scale.indexOf(interval);
-  return degree >= 0 ? DEGREE_NAMES[degree] : "·";
+function parseMidi(buffer: ArrayBuffer, filename: string): MidiProject {
+  const view = new DataView(buffer);
+  if (view.byteLength < 14 || view.getUint32(0) !== 0x4d546864) throw new Error("This is not a valid MIDI file.");
+  const headerLength = view.getUint32(4);
+  const trackCount = view.getUint16(10);
+  const division = view.getUint16(12);
+  if (division & 0x8000) throw new Error("SMPTE-timed MIDI files are not supported yet.");
+  const ticksPerBeat = division || 480;
+  const tempos: { tick: number; microseconds: number }[] = [{ tick: 0, microseconds: 500000 }];
+  const parsedTracks: ParsedTrack[] = [];
+  let offset = 8 + headerLength;
+
+  for (let trackIndex = 0; trackIndex < trackCount && offset + 8 <= view.byteLength; trackIndex++) {
+    const chunkId = view.getUint32(offset);
+    const chunkLength = view.getUint32(offset + 4);
+    offset += 8;
+    const trackEnd = Math.min(view.byteLength, offset + chunkLength);
+    if (chunkId !== 0x4d54726b) {
+      offset = trackEnd;
+      continue;
+    }
+    const cursor = { value: offset };
+    let tick = 0;
+    let runningStatus = 0;
+    let trackName = "";
+    let program = 0;
+    let channel = 0;
+    const active = new Map<string, { tick: number; velocity: number }[]>();
+    const notes: RawNote[] = [];
+
+    while (cursor.value < trackEnd) {
+      tick += readVariable(view, cursor);
+      if (cursor.value >= trackEnd) break;
+      let status = view.getUint8(cursor.value++);
+      let firstData: number | null = null;
+      if (status < 0x80) {
+        if (!runningStatus) throw new Error("Invalid MIDI running status.");
+        firstData = status;
+        status = runningStatus;
+      } else if (status < 0xf0) {
+        runningStatus = status;
+      }
+
+      if (status === 0xff) {
+        if (cursor.value >= trackEnd) break;
+        const type = view.getUint8(cursor.value++);
+        const length = readVariable(view, cursor);
+        if (type === 0x03 && !trackName) trackName = readText(view, cursor.value, Math.min(length, trackEnd - cursor.value));
+        if (type === 0x51 && length === 3 && cursor.value + 2 < trackEnd) {
+          tempos.push({ tick, microseconds: (view.getUint8(cursor.value) << 16) | (view.getUint8(cursor.value + 1) << 8) | view.getUint8(cursor.value + 2) });
+        }
+        cursor.value = Math.min(trackEnd, cursor.value + length);
+        if (type === 0x2f) break;
+        continue;
+      }
+
+      if (status === 0xf0 || status === 0xf7) {
+        cursor.value = Math.min(trackEnd, cursor.value + readVariable(view, cursor));
+        continue;
+      }
+
+      const eventType = status >> 4;
+      const eventChannel = status & 0x0f;
+      const dataLength = eventType === 0xc || eventType === 0xd ? 1 : 2;
+      const data1 = firstData ?? view.getUint8(cursor.value++);
+      const data2 = dataLength === 2 && cursor.value < trackEnd ? view.getUint8(cursor.value++) : 0;
+      channel = eventChannel;
+
+      if (eventType === 0xc) program = data1;
+      if (eventType === 0x9 && data2 > 0) {
+        const key = `${eventChannel}:${data1}`;
+        const stack = active.get(key) ?? [];
+        stack.push({ tick, velocity: data2 });
+        active.set(key, stack);
+      }
+      if (eventType === 0x8 || (eventType === 0x9 && data2 === 0)) {
+        const key = `${eventChannel}:${data1}`;
+        const stack = active.get(key);
+        const started = stack?.shift();
+        if (started) notes.push({ midi: data1, velocity: started.velocity, startTick: started.tick, endTick: Math.max(tick, started.tick + 1) });
+      }
+    }
+    parsedTracks.push({ name: trackName, channel, program, notes });
+    offset = trackEnd;
+  }
+
+  const tempoMap = tempos
+    .sort((a, b) => a.tick - b.tick)
+    .filter((event, index, list) => index === list.length - 1 || list[index + 1].tick !== event.tick);
+  const tickToSeconds = (targetTick: number) => {
+    let seconds = 0;
+    let previousTick = 0;
+    let microseconds = 500000;
+    for (const event of tempoMap) {
+      if (event.tick > targetTick) break;
+      seconds += ((event.tick - previousTick) / ticksPerBeat) * (microseconds / 1_000_000);
+      previousTick = event.tick;
+      microseconds = event.microseconds;
+    }
+    return seconds + ((targetTick - previousTick) / ticksPerBeat) * (microseconds / 1_000_000);
+  };
+
+  const tracks = parsedTracks
+    .filter((track) => track.notes.length > 0)
+    .map((track, index) => {
+      const fallback = track.channel === 9 ? "Drums" : GM_NAMES[track.program] || `Track ${index + 1}`;
+      return {
+        id: index + 1,
+        name: track.name || fallback,
+        channel: track.channel + 1,
+        program: track.program,
+        notes: track.notes.map((note) => ({
+          midi: note.midi,
+          velocity: note.velocity / 127,
+          start: tickToSeconds(note.startTick),
+          duration: Math.max(0.03, tickToSeconds(note.endTick) - tickToSeconds(note.startTick)),
+        })),
+        muted: false,
+        solo: false,
+        color: TRACK_COLORS[index % TRACK_COLORS.length],
+      };
+    });
+
+  if (!tracks.length) throw new Error("No playable note tracks were found in this MIDI file.");
+  const duration = Math.max(...tracks.flatMap((track) => track.notes.map((note) => note.start + note.duration)));
+  return {
+    name: filename,
+    duration,
+    bpm: Math.round(60_000_000 / (tempoMap[0]?.microseconds || 500000)),
+    tracks,
+  };
+}
+
+function formatTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.floor(seconds % 60);
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
 export default function Home() {
-  const [regions, setRegions] = useState(initialRegions);
-  const [notes, setNotes] = useState(initialNotes);
-  const [selected, setSelected] = useState<number[]>([1]);
-  const [playhead, setPlayhead] = useState(5.25);
-  const [zoom, setZoom] = useState(100);
+  const [project, setProject] = useState<MidiProject | null>(null);
+  const [position, setPosition] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [tempoEvents, setTempoEvents] = useState<TempoEvent[]>([
-    { beat: 0, bpm: 118 },
-    { beat: 16, bpm: 126 },
-  ]);
-  const [keyEvents, setKeyEvents] = useState<KeyEvent[]>([
-    { beat: 0, root: 0, mode: "Major" },
-    { beat: 16, root: 9, mode: "Minor" },
-  ]);
-  const [draftTempo, setDraftTempo] = useState(122);
-  const [draftRoot, setDraftRoot] = useState(0);
-  const [draftMode, setDraftMode] = useState<"Major" | "Minor">("Major");
-  const [snap, setSnap] = useState(true);
-  const [status, setStatus] = useState("Ready");
-  const [drag, setDrag] = useState<
-    | { type: "region"; id: number; originX: number; start: number }
-    | { type: "trim-left" | "trim-right"; id: number; originX: number; start: number; length: number }
-    | null
-  >(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
-  const lastAudibleBeat = useRef(-1);
-  const timelineRef = useRef<HTMLDivElement | null>(null);
-  const pxPerBeat = (58 * zoom) / 100;
-  const surfaceWidth = TOTAL_BEATS * pxPerBeat;
-  const currentKey = keyAt(playhead, keyEvents);
-  const currentBpm = bpmAt(playhead, tempoEvents);
+  const playbackStartRef = useRef(0);
+  const positionStartRef = useRef(0);
+  const animationRef = useRef(0);
+  const scheduledRef = useRef(new Set<string>());
+  const voicesRef = useRef(new Set<OscillatorNode>());
+  const projectRef = useRef(project);
 
-  const sortedTempo = useMemo(
-    () => [...tempoEvents].sort((a, b) => a.beat - b.beat),
-    [tempoEvents],
-  );
-  const sortedKeys = useMemo(
-    () => [...keyEvents].sort((a, b) => a.beat - b.beat),
-    [keyEvents],
-  );
+  useEffect(() => { projectRef.current = project; }, [project]);
 
-  const flash = useCallback((message: string) => {
-    setStatus(message);
-    window.setTimeout(() => setStatus("Ready"), 1800);
+  const stopVoices = useCallback(() => {
+    voicesRef.current.forEach((voice) => {
+      try { voice.stop(); } catch {}
+    });
+    voicesRef.current.clear();
   }, []);
 
-  const playTone = useCallback((pitch: number, duration = 0.16) => {
+  const audibleTracks = useCallback((tracks: MidiTrack[]) => {
+    const hasSolo = tracks.some((track) => track.solo);
+    return tracks.filter((track) => !track.muted && (!hasSolo || track.solo));
+  }, []);
+
+  const triggerNote = useCallback((note: MidiNote, track: MidiTrack, delay: number) => {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     if (!audioRef.current) audioRef.current = new AudioContextClass();
     const context = audioRef.current;
+    const start = context.currentTime + Math.max(0, delay);
+    const duration = Math.min(note.duration, track.channel === 10 ? 0.12 : 2.5);
     const oscillator = context.createOscillator();
     const gain = context.createGain();
-    oscillator.type = "triangle";
-    oscillator.frequency.value = 440 * 2 ** ((pitch - 69) / 12);
-    gain.gain.setValueAtTime(0.0001, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
+    const waveform: OscillatorType[] = ["triangle", "sine", "square", "sawtooth"];
+    oscillator.type = track.channel === 10 ? "square" : waveform[(track.id - 1) % waveform.length];
+    oscillator.frequency.value = track.channel === 10 ? 70 + (note.midi % 12) * 13 : 440 * 2 ** ((note.midi - 69) / 12);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.015, note.velocity * 0.1), start + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + Math.max(0.04, duration));
     oscillator.connect(gain).connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + duration + 0.02);
+    oscillator.start(start);
+    oscillator.stop(start + Math.max(0.05, duration) + 0.02);
+    voicesRef.current.add(oscillator);
+    oscillator.onended = () => voicesRef.current.delete(oscillator);
   }, []);
 
+  const pause = useCallback(() => {
+    setIsPlaying(false);
+    cancelAnimationFrame(animationRef.current);
+    stopVoices();
+  }, [stopVoices]);
+
+  const play = useCallback(() => {
+    if (!project || !project.tracks.length) return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      if (!audioRef.current) audioRef.current = new AudioContextClass();
+      void audioRef.current.resume();
+    }
+    if (position >= project.duration - 0.02) setPosition(0);
+    positionStartRef.current = position >= project.duration - 0.02 ? 0 : position;
+    playbackStartRef.current = performance.now();
+    scheduledRef.current.clear();
+    setIsPlaying(true);
+  }, [position, project]);
+
   useEffect(() => {
-    if (!isPlaying) return;
-    let previous = performance.now();
-    let animation = 0;
-    const tick = (now: number) => {
-      const deltaSeconds = (now - previous) / 1000;
-      previous = now;
-      setPlayhead((beat) => {
-        const next = beat + deltaSeconds * (bpmAt(beat, sortedTempo) / 60);
-        if (next >= TOTAL_BEATS) {
-          setIsPlaying(false);
-          return 0;
-        }
-        const crossed = notes.filter((note) => note.start > lastAudibleBeat.current && note.start <= next);
-        crossed.slice(0, 3).forEach((note) => playTone(note.pitch));
-        lastAudibleBeat.current = next;
-        return next;
+    if (!isPlaying || !project) return;
+    const frame = () => {
+      const elapsed = (performance.now() - playbackStartRef.current) / 1000;
+      const now = positionStartRef.current + elapsed;
+      if (now >= project.duration) {
+        setPosition(project.duration);
+        setIsPlaying(false);
+        stopVoices();
+        return;
+      }
+      setPosition(now);
+      const lookahead = 0.12;
+      audibleTracks(projectRef.current?.tracks ?? []).forEach((track) => {
+        track.notes.forEach((note, noteIndex) => {
+          const key = `${track.id}-${noteIndex}`;
+          if (!scheduledRef.current.has(key) && note.start >= now && note.start < now + lookahead) {
+            scheduledRef.current.add(key);
+            triggerNote(note, track, note.start - now);
+          }
+        });
       });
-      animation = requestAnimationFrame(tick);
+      animationRef.current = requestAnimationFrame(frame);
     };
-    lastAudibleBeat.current = playhead - 0.05;
-    animation = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animation);
-  }, [isPlaying, notes, playTone, sortedTempo]);
+    animationRef.current = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(animationRef.current);
+  }, [audibleTracks, isPlaying, project, stopVoices, triggerNote]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
-      if (event.code === "Space") {
-        event.preventDefault();
-        setIsPlaying((value) => !value);
-      }
-      if (event.key === "Delete" || event.key === "Backspace") {
-        setRegions((items) => items.filter((region) => !selected.includes(region.id)));
-      }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement) return;
+      event.preventDefault();
+      if (isPlaying) pause(); else play();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selected]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isPlaying, pause, play]);
 
-  useEffect(() => {
-    const onMove = (event: PointerEvent) => {
-      if (!drag) return;
-      const delta = (event.clientX - drag.originX) / pxPerBeat;
-      const quantized = snap ? Math.round(delta * 4) / 4 : delta;
-      setRegions((items) =>
-        items.map((region) => {
-          if (region.id !== drag.id) return region;
-          if (drag.type === "region") {
-            return { ...region, start: Math.max(0, Math.min(TOTAL_BEATS - region.length, drag.start + quantized)) };
-          }
-          if (drag.type === "trim-left") {
-            const nextStart = Math.max(0, Math.min(drag.start + drag.length - 0.5, drag.start + quantized));
-            return { ...region, start: nextStart, length: drag.length + drag.start - nextStart };
-          }
-          return { ...region, length: Math.max(0.5, Math.min(TOTAL_BEATS - drag.start, drag.length + quantized)) };
-        }),
-      );
-    };
-    const onUp = () => setDrag(null);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [drag, pxPerBeat, snap]);
-
-  function locateBeat(event: React.PointerEvent<HTMLElement>) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const raw = (event.clientX - rect.left) / pxPerBeat;
-    return Math.max(0, Math.min(TOTAL_BEATS, snap ? Math.round(raw * 4) / 4 : raw));
+  async function loadFile(file?: File) {
+    if (!file) return;
+    if (!/\.midi?$/i.test(file.name)) {
+      setError("请选择 .mid 或 .midi 文件");
+      return;
+    }
+    try {
+      pause();
+      const parsed = parseMidi(await file.arrayBuffer(), file.name);
+      setProject(parsed);
+      setPosition(0);
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法读取这个 MIDI 文件");
+    }
   }
 
-  function splitRegion() {
-    const region = regions.find((item) => selected.includes(item.id) && playhead > item.start && playhead < item.start + item.length);
-    if (!region) return flash("Move playhead inside a selected region");
-    const nextId = Math.max(...regions.map((item) => item.id), 0) + 1;
-    setRegions((items) => [
-      ...items.map((item) => item.id === region.id ? { ...item, length: playhead - item.start } : item),
-      { ...region, id: nextId, name: `${region.name.split(" ·")[0]} B · MIDI`, start: playhead, length: region.start + region.length - playhead },
-    ]);
-    setSelected([nextId]);
-    flash("Region split at playhead");
+  function toggleTrack(id: number, kind: "muted" | "solo") {
+    setProject((current) => current ? {
+      ...current,
+      tracks: current.tracks.map((track) => track.id === id ? { ...track, [kind]: !track[kind] } : track),
+    } : current);
+    stopVoices();
+    scheduledRef.current.clear();
   }
 
-  function mergeRegions() {
-    const picks = regions.filter((region) => selected.includes(region.id));
-    if (picks.length < 2) return flash("Shift-click two regions to merge");
-    const start = Math.min(...picks.map((item) => item.start));
-    const end = Math.max(...picks.map((item) => item.start + item.length));
-    const base = picks[0];
-    setRegions((items) => [
-      ...items.filter((item) => !selected.includes(item.id)),
-      { ...base, id: Date.now(), name: "MERGED · MIDI", start, length: end - start },
-    ]);
-    setSelected([]);
-    flash("Selected regions merged");
+  function seek(next: number) {
+    const wasPlaying = isPlaying;
+    pause();
+    setPosition(next);
+    positionStartRef.current = next;
+    if (wasPlaying) window.setTimeout(() => {
+      playbackStartRef.current = performance.now();
+      scheduledRef.current.clear();
+      setIsPlaying(true);
+    }, 0);
   }
 
-  function addTempoEvent() {
-    setTempoEvents((items) => [...items.filter((event) => Math.abs(event.beat - playhead) > 0.01), { beat: playhead, bpm: draftTempo }]);
-    flash(`Tempo ${draftTempo} added at ${formatPosition(playhead)}`);
-  }
-
-  function addKeyEvent() {
-    setKeyEvents((items) => [...items.filter((event) => Math.abs(event.beat - playhead) > 0.01), { beat: playhead, root: draftRoot, mode: draftMode }]);
-    flash(`${KEYS[draftRoot]} ${draftMode} added at ${formatPosition(playhead)}`);
-  }
-
-  function formatPosition(beat: number) {
-    const bar = Math.floor(beat / 4) + 1;
-    const beatInBar = Math.floor(beat % 4) + 1;
-    const ticks = Math.floor((beat % 1) * 960);
-    return `${String(bar).padStart(2, "0")}.${beatInBar}.${String(ticks).padStart(3, "0")}`;
-  }
+  const progress = project?.duration ? (position / project.duration) * 100 : 0;
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
+    <main className="studio-shell">
+      <header className="studio-header">
         <div className="brand">
-          <span className="brand-mark"><i /><i /><i /><i /></span>
+          <span className="brand-bars"><i /><i /><i /><i /></span>
           <span>HARMONIC</span>
-          <span className="edition">STUDIO</span>
+          <small>MIDI PLAYER</small>
         </div>
-        <div className="transport" aria-label="Transport">
-          <button className="icon-button" aria-label="Go to beginning" onClick={() => setPlayhead(0)}>│◀</button>
-          <button
-            className={`play-button ${isPlaying ? "is-playing" : ""}`}
-            aria-label={isPlaying ? "Pause" : "Play"}
-            onClick={() => setIsPlaying((value) => !value)}
-          >
-            {isPlaying ? "Ⅱ" : "▶"}
-          </button>
-          <button className="icon-button" aria-label="Stop" onClick={() => { setIsPlaying(false); setPlayhead(0); }}>■</button>
-          <div className="time-readout">
-            <span className="readout-label">POSITION</span>
-            <strong>{formatPosition(playhead)}</strong>
-          </div>
-          <div className="tempo-readout">
-            <span className="readout-label">TEMPO</span>
-            <strong>{Math.round(currentBpm)}</strong><small>BPM</small>
-          </div>
-          <div className="key-readout">
-            <span className="readout-label">KEY</span>
-            <strong>{KEYS[currentKey.root]} {currentKey.mode === "Major" ? "MAJ" : "MIN"}</strong>
-          </div>
-        </div>
-        <div className="top-actions">
-          <span className={`status-dot ${status !== "Ready" ? "active" : ""}`} />
-          <span className="status-text">{status}</span>
-          <button className="export-button" onClick={() => flash("Project snapshot saved locally")}>SAVE</button>
-        </div>
+        <button className="import-small" onClick={() => inputRef.current?.click()}>
+          <span>＋</span> 导入 MIDI
+        </button>
       </header>
 
-      <section className="toolbar">
-        <div className="tool-group">
-          <button className="tool active" aria-label="Select tool">↖ <span>SELECT</span></button>
-          <button className="tool" aria-label="Draw tool">✎ <span>DRAW</span></button>
-        </div>
-        <div className="tool-group">
-          <button className="tool" onClick={splitRegion}>⌁ <span>SPLIT</span></button>
-          <button className="tool" onClick={mergeRegions}>⧉ <span>MERGE</span></button>
-          <button className="tool" onClick={() => { setRegions((items) => items.filter((region) => !selected.includes(region.id))); setSelected([]); flash("Region deleted"); }}>× <span>DELETE</span></button>
-        </div>
-        <label className="snap-control">
-          <input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} />
-          SNAP <b>1/16</b>
-        </label>
-        <div className="zoom-control">
-          <span>−</span>
-          <input aria-label="Timeline zoom" type="range" min="55" max="170" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
-          <span>＋</span>
-          <b>{zoom}%</b>
-        </div>
-      </section>
-
-      <div className="workspace">
-        <aside className="inspector">
-          <div className="inspector-heading">
-            <span>GLOBAL EVENTS</span>
-            <small>AT PLAYHEAD</small>
-          </div>
-          <div className="event-card tempo-card">
-            <div className="event-icon">♩</div>
+      {!project ? (
+        <section
+          className={`empty-state ${isDragging ? "dragging" : ""}`}
+          onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            loadFile(event.dataTransfer.files[0]);
+          }}
+        >
+          <div className="empty-orbit"><span>♪</span></div>
+          <p className="eyebrow">MIDI TRACK PLAYER</p>
+          <h1>导入 MIDI，<br />马上开始聆听。</h1>
+          <p className="empty-copy">自动识别并拆分所有音轨。播放、暂停，<br />为每条轨道设置静音或独奏。</p>
+          <button className="primary-import" onClick={() => inputRef.current?.click()}>
+            选择 MIDI 文件 <span>↗</span>
+          </button>
+          <button className="demo-button" onClick={() => { setProject(demoProject); setPosition(0); setError(""); }}>
+            或打开示例工程
+          </button>
+          <p className="privacy-note">支持 .mid / .midi · 文件只在浏览器本地读取</p>
+          {error && <p className="error-message">{error}</p>}
+        </section>
+      ) : (
+        <section className="player">
+          <div className="project-summary">
             <div>
-              <span className="field-label">TEMPO</span>
-              <div className="inline-input">
-                <input type="number" min="40" max="240" value={draftTempo} onChange={(event) => setDraftTempo(Number(event.target.value))} />
-                <span>BPM</span>
-              </div>
+              <p className="eyebrow">NOW LOADED</p>
+              <h1>{project.name}</h1>
+              <p>{project.tracks.length} 条音轨 <i /> {project.bpm} BPM <i /> {formatTime(project.duration)}</p>
             </div>
-            <button onClick={addTempoEvent} aria-label="Add tempo event">＋</button>
+            <button className="replace-button" onClick={() => inputRef.current?.click()}>更换文件</button>
           </div>
-          <div className="event-card key-card">
-            <div className="event-icon">♭</div>
-            <div className="key-fields">
-              <span className="field-label">KEY / SCALE</span>
-              <div>
-                <select aria-label="Key root" value={draftRoot} onChange={(event) => setDraftRoot(Number(event.target.value))}>
-                  {KEYS.map((key, index) => <option value={index} key={key}>{key}</option>)}
-                </select>
-                <select aria-label="Scale mode" value={draftMode} onChange={(event) => setDraftMode(event.target.value as "Major" | "Minor")}>
-                  <option>Major</option><option>Minor</option>
-                </select>
-              </div>
+
+          <div className="transport-card">
+            <button className="jump-button" aria-label="回到开头" onClick={() => seek(0)}>│◀</button>
+            <button className={`main-play ${isPlaying ? "playing" : ""}`} aria-label={isPlaying ? "暂停" : "播放"} onClick={isPlaying ? pause : play}>
+              {isPlaying ? "Ⅱ" : "▶"}
+            </button>
+            <div className="time-current">{formatTime(position)}</div>
+            <div className="scrubber">
+              <div className="scrubber-fill" style={{ width: `${progress}%` }} />
+              <input
+                aria-label="播放进度"
+                type="range"
+                min="0"
+                max={project.duration}
+                step="0.01"
+                value={position}
+                onChange={(event) => seek(Number(event.target.value))}
+              />
             </div>
-            <button onClick={addKeyEvent} aria-label="Add key event">＋</button>
+            <div className="time-total">{formatTime(project.duration)}</div>
           </div>
-          <div className="event-list">
-            <div className="list-title"><span>AUTOMATION MAP</span><span>{tempoEvents.length + keyEvents.length}</span></div>
-            {[...sortedTempo.map((event) => ({ ...event, kind: "tempo" as const })), ...sortedKeys.map((event) => ({ ...event, kind: "key" as const }))]
-              .sort((a, b) => a.beat - b.beat)
-              .map((event, index) => (
-                <button className="event-row" key={`${event.kind}-${event.beat}-${index}`} onClick={() => setPlayhead(event.beat)}>
-                  <span className={`event-pip ${event.kind}`} />
-                  <span>{formatPosition(event.beat).slice(0, 4)}</span>
-                  <strong>{event.kind === "tempo" ? `${event.bpm} BPM` : `${KEYS[event.root]} ${event.mode}`}</strong>
-                </button>
-              ))}
-          </div>
-          <div className="hint-box">
-            <span>TIP</span>
-            Set the playhead anywhere, then add tempo or key changes here.
-          </div>
-        </aside>
 
-        <section className="editor">
-          <div className="scroll-stage" ref={timelineRef}>
-            <div className="timeline-content" style={{ width: surfaceWidth }}>
-              <div className="ruler" onPointerDown={(event) => setPlayhead(locateBeat(event))}>
-                {Array.from({ length: 9 }, (_, index) => (
-                  <div className="bar-mark" key={index} style={{ left: index * 4 * pxPerBeat }}>
-                    <b>{index + 1}</b>
-                    <span />
+          <div className="track-heading">
+            <span>音轨</span>
+            <span>{audibleTracks(project.tracks).length} / {project.tracks.length} 正在发声</span>
+          </div>
+
+          <div className="track-list">
+            {project.tracks.map((track, index) => {
+              const hasSolo = project.tracks.some((item) => item.solo);
+              const audible = !track.muted && (!hasSolo || track.solo);
+              const minPitch = Math.min(...track.notes.map((note) => note.midi));
+              const maxPitch = Math.max(...track.notes.map((note) => note.midi));
+              const range = Math.max(1, maxPitch - minPitch);
+              return (
+                <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
+                  <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
+                  <div className="track-meta">
+                    <strong>{track.name}</strong>
+                    <span>CH {track.channel} · {track.channel === 10 ? "Percussion" : GM_NAMES[track.program] || "Instrument"} · {track.notes.length} notes</span>
                   </div>
-                ))}
-                {sortedTempo.map((event) => (
-                  <button className="ruler-event tempo" key={`t-${event.beat}`} style={{ left: event.beat * pxPerBeat }} onClick={(e) => { e.stopPropagation(); setPlayhead(event.beat); }} title={`${event.bpm} BPM`}>
-                    {event.bpm}
-                  </button>
-                ))}
-                {sortedKeys.map((event) => (
-                  <button className="ruler-event key" key={`k-${event.beat}`} style={{ left: event.beat * pxPerBeat }} onClick={(e) => { e.stopPropagation(); setPlayhead(event.beat); }} title={`${KEYS[event.root]} ${event.mode}`}>
-                    {KEYS[event.root]}{event.mode === "Minor" ? "m" : ""}
-                  </button>
-                ))}
-              </div>
-
-              <div className="arrangement" onPointerDown={(event) => { if (event.target === event.currentTarget) setPlayhead(locateBeat(event)); }}>
-                <div className="lane-label">MIDI 01</div>
-                {regions.map((region) => (
-                  <div
-                    className={`region ${selected.includes(region.id) ? "selected" : ""}`}
-                    key={region.id}
-                    style={{ left: region.start * pxPerBeat, width: region.length * pxPerBeat, "--region": region.color } as React.CSSProperties}
-                    onPointerDown={(event) => {
-                      event.stopPropagation();
-                      if (event.shiftKey) setSelected((items) => items.includes(region.id) ? items.filter((id) => id !== region.id) : [...items, region.id]);
-                      else setSelected([region.id]);
-                      setDrag({ type: "region", id: region.id, originX: event.clientX, start: region.start });
-                    }}
-                  >
-                    <button className="trim-handle left" aria-label={`Trim left edge of ${region.name}`} onPointerDown={(event) => { event.stopPropagation(); setDrag({ type: "trim-left", id: region.id, originX: event.clientX, start: region.start, length: region.length }); }} />
-                    <span>{region.name}</span>
-                    <div className="region-notes">
-                      {[0, 1, 2, 3, 4, 5, 6, 7].map((n) => <i key={n} style={{ left: `${6 + n * 11}%`, top: `${25 + ((n * 17) % 50)}%`, width: `${5 + (n % 3) * 4}%` }} />)}
-                    </div>
-                    <button className="trim-handle right" aria-label={`Trim right edge of ${region.name}`} onPointerDown={(event) => { event.stopPropagation(); setDrag({ type: "trim-right", id: region.id, originX: event.clientX, start: region.start, length: region.length }); }} />
+                  <div className="track-lane">
+                    <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />
+                    {track.notes.slice(0, 900).map((note, noteIndex) => (
+                      <i
+                        key={noteIndex}
+                        style={{
+                          left: `${(note.start / project.duration) * 100}%`,
+                          width: `${Math.max(0.18, (note.duration / project.duration) * 100)}%`,
+                          bottom: `${8 + ((note.midi - minPitch) / range) * 70}%`,
+                          background: track.color,
+                          opacity: 0.5 + note.velocity * 0.5,
+                        }}
+                      />
+                    ))}
+                    <span className="lane-playhead" style={{ left: `${progress}%` }} />
                   </div>
-                ))}
-              </div>
-
-              <div className="piano-roll">
-                <div className="piano-sidebar">
-                  <div className="roll-title"><span>PIANO ROLL</span><small>DEGREE VIEW</small></div>
-                  {PITCHES.map((pitch) => (
+                  <div className="track-controls">
                     <button
-                      key={pitch}
-                      className={`piano-key ${[1, 3, 6, 8, 10].includes(pitch % 12) ? "black" : ""}`}
-                      onClick={() => playTone(pitch, 0.35)}
-                    >
-                      {pitch % 12 === 0 || [59, 64, 67, 71].includes(pitch) ? noteName(pitch) : ""}
-                    </button>
-                  ))}
-                </div>
-                <div
-                  className="note-grid"
-                  style={{ width: surfaceWidth }}
-                  onDoubleClick={(event) => {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    const beat = Math.max(0, Math.min(TOTAL_BEATS - 0.5, (event.clientX - rect.left) / pxPerBeat));
-                    const row = Math.max(0, Math.min(PITCHES.length - 1, Math.floor((event.clientY - rect.top) / 24)));
-                    const pitch = PITCHES[row];
-                    setNotes((items) => [...items, { id: Date.now(), pitch, start: snap ? Math.round(beat * 4) / 4 : beat, length: 1, velocity: 90 }]);
-                    playTone(pitch);
-                  }}
-                >
-                  {PITCHES.map((pitch, row) => (
-                    <div className={`pitch-row ${[1, 3, 6, 8, 10].includes(pitch % 12) ? "black-row" : ""}`} key={pitch} style={{ top: row * 24 }} />
-                  ))}
-                  {Array.from({ length: TOTAL_BEATS * 4 + 1 }, (_, index) => <i className={`grid-line ${index % 16 === 0 ? "bar" : index % 4 === 0 ? "beat" : ""}`} key={index} style={{ left: index * pxPerBeat / 4 }} />)}
-                  {notes.map((note) => {
-                    const row = PITCHES.indexOf(note.pitch);
-                    const noteKey = keyAt(note.start, sortedKeys);
-                    return (
-                      <button
-                        className={`midi-note ${degreeFor(note.pitch, noteKey) === "·" ? "chromatic" : ""}`}
-                        key={note.id}
-                        style={{ left: note.start * pxPerBeat, top: row * 24 + 3, width: Math.max(16, note.length * pxPerBeat), opacity: 0.65 + note.velocity / 300 }}
-                        onClick={(event) => { event.stopPropagation(); playTone(note.pitch); }}
-                        onContextMenu={(event) => { event.preventDefault(); setNotes((items) => items.filter((item) => item.id !== note.id)); }}
-                        title={`${noteName(note.pitch)} · degree ${degreeFor(note.pitch, noteKey)} · right-click to delete`}
-                      >
-                        <span>{degreeFor(note.pitch, noteKey)}</span>
-                        <small>{noteName(note.pitch)}</small>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="playhead" style={{ left: playhead * pxPerBeat }}>
-                <span />
-              </div>
-            </div>
+                      className={track.muted ? "active mute" : ""}
+                      aria-label={`${track.name} 静音`}
+                      aria-pressed={track.muted}
+                      onClick={() => toggleTrack(track.id, "muted")}
+                    >M</button>
+                    <button
+                      className={track.solo ? "active solo" : ""}
+                      aria-label={`${track.name} 独奏`}
+                      aria-pressed={track.solo}
+                      onClick={() => toggleTrack(track.id, "solo")}
+                    >S</button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
-      </div>
+      )}
+
+      <input
+        ref={inputRef}
+        className="visually-hidden"
+        type="file"
+        accept=".mid,.midi,audio/midi,audio/x-midi"
+        onChange={(event) => loadFile(event.target.files?.[0])}
+      />
       <footer>
+        <span>HARMONIC / LOCAL MIDI ENGINE</span>
         <span><kbd>SPACE</kbd> PLAY / PAUSE</span>
-        <span><kbd>⇧ CLICK</kbd> MULTI-SELECT</span>
-        <span><kbd>DOUBLE CLICK</kbd> ADD NOTE</span>
-        <span><kbd>RIGHT CLICK</kbd> DELETE NOTE</span>
-        <strong>{regions.length} REGIONS · {notes.length} NOTES</strong>
       </footer>
     </main>
   );

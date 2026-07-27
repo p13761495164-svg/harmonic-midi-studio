@@ -1,12 +1,13 @@
-# Harmonic Studio
+# Harmonic MIDI Track Player
 
-A focused browser-based MIDI editor prototype with:
+A focused browser-based MIDI player with:
 
-- Region move, trim, split, merge, multi-select and delete
-- Piano roll note entry, preview and scale-degree labels
-- Tempo and key automation events at any playhead position
-- Web Audio playback with tempo-aware transport
-- Timeline zoom, snap and responsive desktop/mobile layouts
+- Local `.mid` / `.midi` file import
+- Automatic track separation
+- Play, pause and seek
+- Per-track mute and solo
+- Browser-native Web Audio playback
+- Responsive desktop and mobile layouts
 
 ## Development
 
