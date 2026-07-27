@@ -8,13 +8,20 @@ test("ships the focused MIDI track player", async () => {
   const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
 
   assert.match(layout, /MIDI Track Player/);
-  assert.match(page, /parseMidi/);
+  assert.match(page, /new Midi/);
   assert.match(page, /arrayBuffer/);
   assert.match(page, /muted/);
   assert.match(page, /solo/);
+  assert.match(page, /controlChanges\[64\]/);
+  assert.match(page, /keySignatures/);
+  assert.match(page, /header\.tempos/);
+  assert.match(page, /toArray/);
+  assert.match(page, /deleteTrack/);
+  assert.match(page, /presetFor/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);
   assert.match(css, /\.main-play/);
-  assert.doesNotMatch(page, /splitRegion|mergeRegions|addTempoEvent|addKeyEvent/);
+  assert.match(css, /\.edit-tools/);
+  assert.doesNotMatch(page, /splitRegion|mergeRegions/);
 });

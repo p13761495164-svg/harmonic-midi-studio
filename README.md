@@ -6,6 +6,11 @@ A focused browser-based MIDI player with:
 - Automatic track separation
 - Play, pause and seek
 - Per-track mute and solo
+- Per-track instrument-family synthesis with filters and reverb
+- Current key and tempo display
+- Add tempo and key-signature events at the playhead
+- Delete tracks and remove all sustain-pedal (CC64) events
+- Export the edited project as a new MIDI file
 - Browser-native Web Audio playback
 - Responsive desktop and mobile layouts
 

@@ -1,20 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Midi, Track } from "@tonejs/midi";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type MidiNote = {
-  midi: number;
-  velocity: number;
-  start: number;
-  duration: number;
-};
-
-type MidiTrack = {
+type UiTrack = {
   id: number;
-  name: string;
-  channel: number;
-  program: number;
-  notes: MidiNote[];
+  source: Track;
   muted: boolean;
   solo: boolean;
   color: string;
@@ -22,218 +13,148 @@ type MidiTrack = {
 
 type MidiProject = {
   name: string;
-  duration: number;
-  bpm: number;
-  tracks: MidiTrack[];
+  midi: Midi;
+  tracks: UiTrack[];
+  estimatedKey: KeyEvent;
 };
 
-type RawNote = {
-  midi: number;
-  velocity: number;
-  startTick: number;
-  endTick: number;
+type KeyEvent = {
+  key: string;
+  scale: "major" | "minor";
+  ticks: number;
+  estimated?: boolean;
 };
 
-type ParsedTrack = {
-  name: string;
-  channel: number;
-  program: number;
-  notes: RawNote[];
+type AudioGraph = {
+  context: AudioContext;
+  master: GainNode;
+  reverb: ConvolverNode;
+  wet: GainNode;
+};
+
+type Toast = {
+  text: string;
+  action?: { label: string; run: () => void };
 };
 
 const TRACK_COLORS = ["#8c74ff", "#4fc8b7", "#f0a95a", "#ef6f8f", "#5da8ff", "#c781ef", "#76c86c", "#e3cb5f"];
-const GM_NAMES = [
-  "Acoustic Grand", "Bright Piano", "Electric Grand", "Honky-tonk", "Electric Piano", "Electric Piano 2", "Harpsichord", "Clavinet",
-  "Celesta", "Glockenspiel", "Music Box", "Vibraphone", "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
-  "Drawbar Organ", "Percussive Organ", "Rock Organ", "Church Organ", "Reed Organ", "Accordion", "Harmonica", "Tango Accordion",
-  "Nylon Guitar", "Steel Guitar", "Jazz Guitar", "Clean Guitar", "Muted Guitar", "Overdriven Guitar", "Distortion Guitar", "Guitar Harmonics",
-  "Acoustic Bass", "Finger Bass", "Pick Bass", "Fretless Bass", "Slap Bass", "Slap Bass 2", "Synth Bass", "Synth Bass 2",
-  "Violin", "Viola", "Cello", "Contrabass", "Tremolo Strings", "Pizzicato Strings", "Harp", "Timpani",
-  "Strings", "Slow Strings", "Synth Strings", "Synth Strings 2", "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
-  "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn", "Brass Section", "Synth Brass", "Synth Brass 2",
-  "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet",
-  "Piccolo", "Flute", "Recorder", "Pan Flute", "Bottle", "Shakuhachi", "Whistle", "Ocarina",
-  "Lead 1", "Lead 2", "Lead 3", "Lead 4", "Lead 5", "Lead 6", "Lead 7", "Lead 8",
-  "Pad 1", "Pad 2", "Pad 3", "Pad 4", "Pad 5", "Pad 6", "Pad 7", "Pad 8",
-  "FX 1", "FX 2", "FX 3", "FX 4", "FX 5", "FX 6", "FX 7", "FX 8",
-  "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bag Pipe", "Fiddle", "Shanai",
-  "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock", "Taiko", "Melodic Tom", "Synth Drum", "Reverse Cymbal",
-  "Guitar Fret", "Breath", "Seashore", "Bird", "Telephone", "Helicopter", "Applause", "Gunshot",
-];
+const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
+const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 
-const demoProject: MidiProject = {
-  name: "Midnight Sketch.mid",
-  duration: 18.4,
-  bpm: 112,
-  tracks: [
-    { id: 1, name: "Electric Piano", channel: 1, program: 4, muted: false, solo: false, color: TRACK_COLORS[0], notes: makeDemoNotes(48, 0, 16, 0.72) },
-    { id: 2, name: "Warm Bass", channel: 2, program: 38, muted: false, solo: false, color: TRACK_COLORS[1], notes: makeDemoNotes(36, 0.2, 12, 1.05) },
-    { id: 3, name: "Soft Drums", channel: 10, program: 0, muted: false, solo: false, color: TRACK_COLORS[2], notes: makeDemoNotes(42, 0, 32, 0.12) },
-    { id: 4, name: "Air Pad", channel: 3, program: 89, muted: false, solo: false, color: TRACK_COLORS[3], notes: makeDemoNotes(60, 1, 8, 1.8) },
-  ],
-};
-
-function makeDemoNotes(base: number, offset: number, count: number, duration: number): MidiNote[] {
-  return Array.from({ length: count }, (_, index) => ({
-    midi: base + [0, 4, 7, 9, 7, 4][index % 6],
-    velocity: 0.45 + (index % 4) * 0.11,
-    start: offset + index * (18 / count),
-    duration,
+function detectKey(midi: Midi): KeyEvent {
+  const histogram = Array(12).fill(0);
+  midi.tracks.forEach((track) => track.notes.forEach((note) => {
+    histogram[note.midi % 12] += Math.max(0.1, note.durationTicks) * Math.max(0.2, note.velocity);
   }));
-}
-
-function readVariable(view: DataView, cursor: { value: number }) {
-  let result = 0;
-  let byte = 0;
-  do {
-    byte = view.getUint8(cursor.value++);
-    result = (result << 7) | (byte & 0x7f);
-  } while (byte & 0x80);
-  return result;
-}
-
-function readText(view: DataView, start: number, length: number) {
-  const bytes = new Uint8Array(view.buffer, view.byteOffset + start, length);
-  return new TextDecoder("utf-8").decode(bytes).replace(/\0/g, "").trim();
-}
-
-function parseMidi(buffer: ArrayBuffer, filename: string): MidiProject {
-  const view = new DataView(buffer);
-  if (view.byteLength < 14 || view.getUint32(0) !== 0x4d546864) throw new Error("This is not a valid MIDI file.");
-  const headerLength = view.getUint32(4);
-  const trackCount = view.getUint16(10);
-  const division = view.getUint16(12);
-  if (division & 0x8000) throw new Error("SMPTE-timed MIDI files are not supported yet.");
-  const ticksPerBeat = division || 480;
-  const tempos: { tick: number; microseconds: number }[] = [{ tick: 0, microseconds: 500000 }];
-  const parsedTracks: ParsedTrack[] = [];
-  let offset = 8 + headerLength;
-
-  for (let trackIndex = 0; trackIndex < trackCount && offset + 8 <= view.byteLength; trackIndex++) {
-    const chunkId = view.getUint32(offset);
-    const chunkLength = view.getUint32(offset + 4);
-    offset += 8;
-    const trackEnd = Math.min(view.byteLength, offset + chunkLength);
-    if (chunkId !== 0x4d54726b) {
-      offset = trackEnd;
-      continue;
-    }
-    const cursor = { value: offset };
-    let tick = 0;
-    let runningStatus = 0;
-    let trackName = "";
-    let program = 0;
-    let channel = 0;
-    const active = new Map<string, { tick: number; velocity: number }[]>();
-    const notes: RawNote[] = [];
-
-    while (cursor.value < trackEnd) {
-      tick += readVariable(view, cursor);
-      if (cursor.value >= trackEnd) break;
-      let status = view.getUint8(cursor.value++);
-      let firstData: number | null = null;
-      if (status < 0x80) {
-        if (!runningStatus) throw new Error("Invalid MIDI running status.");
-        firstData = status;
-        status = runningStatus;
-      } else if (status < 0xf0) {
-        runningStatus = status;
-      }
-
-      if (status === 0xff) {
-        if (cursor.value >= trackEnd) break;
-        const type = view.getUint8(cursor.value++);
-        const length = readVariable(view, cursor);
-        if (type === 0x03 && !trackName) trackName = readText(view, cursor.value, Math.min(length, trackEnd - cursor.value));
-        if (type === 0x51 && length === 3 && cursor.value + 2 < trackEnd) {
-          tempos.push({ tick, microseconds: (view.getUint8(cursor.value) << 16) | (view.getUint8(cursor.value + 1) << 8) | view.getUint8(cursor.value + 2) });
-        }
-        cursor.value = Math.min(trackEnd, cursor.value + length);
-        if (type === 0x2f) break;
-        continue;
-      }
-
-      if (status === 0xf0 || status === 0xf7) {
-        cursor.value = Math.min(trackEnd, cursor.value + readVariable(view, cursor));
-        continue;
-      }
-
-      const eventType = status >> 4;
-      const eventChannel = status & 0x0f;
-      const dataLength = eventType === 0xc || eventType === 0xd ? 1 : 2;
-      const data1 = firstData ?? view.getUint8(cursor.value++);
-      const data2 = dataLength === 2 && cursor.value < trackEnd ? view.getUint8(cursor.value++) : 0;
-      channel = eventChannel;
-
-      if (eventType === 0xc) program = data1;
-      if (eventType === 0x9 && data2 > 0) {
-        const key = `${eventChannel}:${data1}`;
-        const stack = active.get(key) ?? [];
-        stack.push({ tick, velocity: data2 });
-        active.set(key, stack);
-      }
-      if (eventType === 0x8 || (eventType === 0x9 && data2 === 0)) {
-        const key = `${eventChannel}:${data1}`;
-        const stack = active.get(key);
-        const started = stack?.shift();
-        if (started) notes.push({ midi: data1, velocity: started.velocity, startTick: started.tick, endTick: Math.max(tick, started.tick + 1) });
-      }
-    }
-    parsedTracks.push({ name: trackName, channel, program, notes });
-    offset = trackEnd;
+  let best = { score: -Infinity, root: 0, scale: "major" as "major" | "minor" };
+  for (let root = 0; root < 12; root++) {
+    const major = histogram.reduce((sum, value, pitch) => sum + value * MAJOR_PROFILE[(pitch - root + 12) % 12], 0);
+    const minor = histogram.reduce((sum, value, pitch) => sum + value * MINOR_PROFILE[(pitch - root + 12) % 12], 0);
+    if (major > best.score) best = { score: major, root, scale: "major" };
+    if (minor > best.score) best = { score: minor, root, scale: "minor" };
   }
+  return { key: PITCH_CLASS_NAMES[best.root], scale: best.scale, ticks: 0, estimated: true };
+}
 
-  const tempoMap = tempos
-    .sort((a, b) => a.tick - b.tick)
-    .filter((event, index, list) => index === list.length - 1 || list[index + 1].tick !== event.tick);
-  const tickToSeconds = (targetTick: number) => {
-    let seconds = 0;
-    let previousTick = 0;
-    let microseconds = 500000;
-    for (const event of tempoMap) {
-      if (event.tick > targetTick) break;
-      seconds += ((event.tick - previousTick) / ticksPerBeat) * (microseconds / 1_000_000);
-      previousTick = event.tick;
-      microseconds = event.microseconds;
-    }
-    return seconds + ((targetTick - previousTick) / ticksPerBeat) * (microseconds / 1_000_000);
-  };
-
-  const tracks = parsedTracks
-    .filter((track) => track.notes.length > 0)
-    .map((track, index) => {
-      const fallback = track.channel === 9 ? "Drums" : GM_NAMES[track.program] || `Track ${index + 1}`;
-      return {
-        id: index + 1,
-        name: track.name || fallback,
-        channel: track.channel + 1,
-        program: track.program,
-        notes: track.notes.map((note) => ({
-          midi: note.midi,
-          velocity: note.velocity / 127,
-          start: tickToSeconds(note.startTick),
-          duration: Math.max(0.03, tickToSeconds(note.endTick) - tickToSeconds(note.startTick)),
-        })),
-        muted: false,
-        solo: false,
-        color: TRACK_COLORS[index % TRACK_COLORS.length],
-      };
-    });
-
-  if (!tracks.length) throw new Error("No playable note tracks were found in this MIDI file.");
-  const duration = Math.max(...tracks.flatMap((track) => track.notes.map((note) => note.start + note.duration)));
+function projectFromMidi(midi: Midi, name: string): MidiProject {
+  const playable = midi.tracks.filter((track) => track.notes.length > 0);
+  if (!playable.length) throw new Error("这个 MIDI 文件中没有可播放的音符轨道");
   return {
-    name: filename,
-    duration,
-    bpm: Math.round(60_000_000 / (tempoMap[0]?.microseconds || 500000)),
-    tracks,
+    name,
+    midi,
+    tracks: playable.map((source, index) => ({
+      id: index + 1,
+      source,
+      muted: false,
+      solo: false,
+      color: TRACK_COLORS[index % TRACK_COLORS.length],
+    })),
+    estimatedKey: detectKey(midi),
   };
+}
+
+function makeDemoProject() {
+  const midi = new Midi();
+  midi.name = "Midnight Sketch";
+  midi.header.tempos.push({ ticks: 0, bpm: 112 });
+  midi.header.keySignatures.push({ ticks: 0, key: "C", scale: "minor" });
+  const specs = [
+    { name: "Electric Piano", program: 4, channel: 0, base: 60, count: 24, step: 480, length: 330 },
+    { name: "Warm Bass", program: 38, channel: 1, base: 36, count: 12, step: 960, length: 760 },
+    { name: "Soft Drums", program: 0, channel: 9, base: 42, count: 48, step: 240, length: 70 },
+    { name: "Air Pad", program: 89, channel: 2, base: 48, count: 8, step: 1440, length: 1320 },
+  ];
+  specs.forEach((spec, trackIndex) => {
+    const track = midi.addTrack();
+    track.name = spec.name;
+    track.channel = spec.channel;
+    track.instrument.number = spec.program;
+    for (let index = 0; index < spec.count; index++) {
+      track.addNote({
+        midi: spec.base + [0, 3, 7, 10, 7, 3][index % 6],
+        ticks: index * spec.step + trackIndex * 30,
+        durationTicks: spec.length,
+        velocity: 0.48 + (index % 4) * 0.1,
+      });
+    }
+    if (trackIndex === 0) {
+      track.addCC({ number: 64, ticks: 0, value: 1 });
+      track.addCC({ number: 64, ticks: 3840, value: 0 });
+    }
+  });
+  midi.header.update();
+  return projectFromMidi(midi, "Midnight Sketch.mid");
 }
 
 function formatTime(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.floor(seconds % 60);
-  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+  const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
+}
+
+function formatKey(event: KeyEvent) {
+  return `${event.key} ${event.scale === "minor" ? "Minor" : "Major"}`;
+}
+
+function currentTempo(midi: Midi, seconds: number) {
+  const ticks = midi.header.secondsToTicks(seconds);
+  return [...midi.header.tempos].sort((a, b) => a.ticks - b.ticks).reverse().find((event) => event.ticks <= ticks)?.bpm ?? 120;
+}
+
+function currentKey(project: MidiProject, seconds: number): KeyEvent {
+  const ticks = project.midi.header.secondsToTicks(seconds);
+  const actual = [...project.midi.header.keySignatures]
+    .sort((a, b) => a.ticks - b.ticks)
+    .reverse()
+    .find((event) => event.ticks <= ticks);
+  return actual
+    ? { key: actual.key, scale: actual.scale as "major" | "minor", ticks: actual.ticks }
+    : project.estimatedKey;
+}
+
+function makeImpulse(context: AudioContext) {
+  const length = Math.floor(context.sampleRate * 1.45);
+  const impulse = context.createBuffer(2, length, context.sampleRate);
+  for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+    const data = impulse.getChannelData(channel);
+    for (let index = 0; index < length; index++) {
+      data[index] = (Math.random() * 2 - 1) * Math.pow(1 - index / length, 2.5);
+    }
+  }
+  return impulse;
+}
+
+function presetFor(track: Track) {
+  const family = track.instrument.family;
+  if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, attack: 0.002, decay: 0.11, level: 0.1, wet: 0.03 };
+  if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, attack: 0.004, decay: 1.45, level: 0.09, wet: 0.12 };
+  if (family === "bass") return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: -5, filter: 780, attack: 0.008, decay: 0.75, level: 0.1, wet: 0.03 };
+  if (family === "guitar") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 7, filter: 2700, attack: 0.003, decay: 0.85, level: 0.085, wet: 0.08 };
+  if (family === "strings" || family === "ensemble" || family === "synth pad") return { wave: "sawtooth" as OscillatorType, second: "triangle" as OscillatorType, detune: 8, filter: 1700, attack: 0.11, decay: 2.5, level: 0.052, wet: 0.2 };
+  if (family === "brass" || family === "reed" || family === "pipe") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: -7, filter: 2100, attack: 0.035, decay: 1.25, level: 0.055, wet: 0.11 };
+  if (family === "synth lead") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: 9, filter: 2800, attack: 0.01, decay: 1.0, level: 0.05, wet: 0.12 };
+  return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 6, filter: 2400, attack: 0.018, decay: 1.1, level: 0.075, wet: 0.1 };
 }
 
 export default function Home() {
@@ -242,16 +163,55 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
+  const [tempoDraft, setTempoDraft] = useState(120);
+  const [keyDraft, setKeyDraft] = useState("C");
+  const [scaleDraft, setScaleDraft] = useState<"major" | "minor">("major");
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [showTools, setShowTools] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const audioRef = useRef<AudioContext | null>(null);
+  const audioRef = useRef<AudioGraph | null>(null);
   const playbackStartRef = useRef(0);
   const positionStartRef = useRef(0);
   const animationRef = useRef(0);
   const scheduledRef = useRef(new Set<string>());
-  const voicesRef = useRef(new Set<OscillatorNode>());
+  const voicesRef = useRef(new Set<AudioScheduledSourceNode>());
   const projectRef = useRef(project);
+  const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
+
+  const notify = useCallback((next: Toast) => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToast(next);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), next.action ? 5500 : 2600);
+  }, []);
+
+  const ensureAudio = useCallback(() => {
+    if (audioRef.current) {
+      void audioRef.current.context.resume();
+      return audioRef.current;
+    }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    const context = new AudioContextClass();
+    const master = context.createGain();
+    master.gain.value = 0.82;
+    const compressor = context.createDynamicsCompressor();
+    compressor.threshold.value = -12;
+    compressor.knee.value = 12;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.005;
+    compressor.release.value = 0.22;
+    const reverb = context.createConvolver();
+    reverb.buffer = makeImpulse(context);
+    const wet = context.createGain();
+    wet.gain.value = 0.35;
+    reverb.connect(wet).connect(master);
+    master.connect(compressor).connect(context.destination);
+    audioRef.current = { context, master, reverb, wet };
+    void context.resume();
+    return audioRef.current;
+  }, []);
 
   const stopVoices = useCallback(() => {
     voicesRef.current.forEach((voice) => {
@@ -260,32 +220,64 @@ export default function Home() {
     voicesRef.current.clear();
   }, []);
 
-  const audibleTracks = useCallback((tracks: MidiTrack[]) => {
+  const audibleTracks = useCallback((tracks: UiTrack[]) => {
     const hasSolo = tracks.some((track) => track.solo);
     return tracks.filter((track) => !track.muted && (!hasSolo || track.solo));
   }, []);
 
-  const triggerNote = useCallback((note: MidiNote, track: MidiTrack, delay: number) => {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    if (!audioRef.current) audioRef.current = new AudioContextClass();
-    const context = audioRef.current;
+  const triggerNote = useCallback((note: Track["notes"][number], track: UiTrack, delay: number) => {
+    const graph = ensureAudio();
+    if (!graph) return;
+    const { context, master, reverb } = graph;
+    const preset = presetFor(track.source);
     const start = context.currentTime + Math.max(0, delay);
-    const duration = Math.min(note.duration, track.channel === 10 ? 0.12 : 2.5);
-    const oscillator = context.createOscillator();
+    const naturalDuration = track.source.instrument.percussion ? 0.12 : Math.min(note.duration, preset.decay);
+    const end = start + Math.max(0.05, naturalDuration);
     const gain = context.createGain();
-    const waveform: OscillatorType[] = ["triangle", "sine", "square", "sawtooth"];
-    oscillator.type = track.channel === 10 ? "square" : waveform[(track.id - 1) % waveform.length];
-    oscillator.frequency.value = track.channel === 10 ? 70 + (note.midi % 12) * 13 : 440 * 2 ** ((note.midi - 69) / 12);
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(preset.filter, start);
+    filter.Q.value = track.source.instrument.percussion ? 0.3 : 0.8;
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.015, note.velocity * 0.1), start + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + Math.max(0.04, duration));
-    oscillator.connect(gain).connect(context.destination);
-    oscillator.start(start);
-    oscillator.stop(start + Math.max(0.05, duration) + 0.02);
-    voicesRef.current.add(oscillator);
-    oscillator.onended = () => voicesRef.current.delete(oscillator);
-  }, []);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.008, note.velocity * preset.level), start + preset.attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+    filter.connect(gain);
+    gain.connect(master);
+    const send = context.createGain();
+    send.gain.value = preset.wet;
+    gain.connect(send).connect(reverb);
+    const frequency = track.source.instrument.percussion
+      ? 58 + (note.midi % 12) * 11
+      : 440 * 2 ** ((note.midi - 69) / 12);
+    [preset.wave, preset.second].forEach((wave, index) => {
+      const oscillator = context.createOscillator();
+      oscillator.type = wave;
+      oscillator.frequency.setValueAtTime(frequency * (index ? (track.source.instrument.percussion ? 1.9 : 1) : 1), start);
+      oscillator.detune.value = index ? preset.detune : -preset.detune / 2;
+      const mix = context.createGain();
+      mix.gain.value = index ? 0.28 : 0.72;
+      oscillator.connect(mix).connect(filter);
+      oscillator.start(start);
+      oscillator.stop(end + 0.03);
+      voicesRef.current.add(oscillator);
+      oscillator.onended = () => voicesRef.current.delete(oscillator);
+    });
+    if (track.source.instrument.percussion) {
+      const buffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.08), context.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let index = 0; index < data.length; index++) data[index] = (Math.random() * 2 - 1) * (1 - index / data.length);
+      const noise = context.createBufferSource();
+      noise.buffer = buffer;
+      const noiseGain = context.createGain();
+      noiseGain.gain.setValueAtTime(note.velocity * 0.04, start);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
+      noise.connect(noiseGain).connect(master);
+      noise.start(start);
+      noise.stop(start + 0.08);
+      voicesRef.current.add(noise);
+      noise.onended = () => voicesRef.current.delete(noise);
+    }
+  }, [ensureAudio]);
 
   const pause = useCallback(() => {
     setIsPlaying(false);
@@ -293,27 +285,25 @@ export default function Home() {
     stopVoices();
   }, [stopVoices]);
 
+  const duration = project?.midi.duration ?? 0;
   const play = useCallback(() => {
     if (!project || !project.tracks.length) return;
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      if (!audioRef.current) audioRef.current = new AudioContextClass();
-      void audioRef.current.resume();
-    }
-    if (position >= project.duration - 0.02) setPosition(0);
-    positionStartRef.current = position >= project.duration - 0.02 ? 0 : position;
+    ensureAudio();
+    const nextPosition = position >= project.midi.duration - 0.02 ? 0 : position;
+    if (nextPosition !== position) setPosition(nextPosition);
+    positionStartRef.current = nextPosition;
     playbackStartRef.current = performance.now();
     scheduledRef.current.clear();
     setIsPlaying(true);
-  }, [position, project]);
+  }, [ensureAudio, position, project]);
 
   useEffect(() => {
     if (!isPlaying || !project) return;
     const frame = () => {
-      const elapsed = (performance.now() - playbackStartRef.current) / 1000;
-      const now = positionStartRef.current + elapsed;
-      if (now >= project.duration) {
-        setPosition(project.duration);
+      const now = positionStartRef.current + (performance.now() - playbackStartRef.current) / 1000;
+      const liveDuration = projectRef.current?.midi.duration ?? 0;
+      if (now >= liveDuration) {
+        setPosition(liveDuration);
         setIsPlaying(false);
         stopVoices();
         return;
@@ -321,11 +311,11 @@ export default function Home() {
       setPosition(now);
       const lookahead = 0.12;
       audibleTracks(projectRef.current?.tracks ?? []).forEach((track) => {
-        track.notes.forEach((note, noteIndex) => {
+        track.source.notes.forEach((note, noteIndex) => {
           const key = `${track.id}-${noteIndex}`;
-          if (!scheduledRef.current.has(key) && note.start >= now && note.start < now + lookahead) {
+          if (!scheduledRef.current.has(key) && note.time >= now && note.time < now + lookahead) {
             scheduledRef.current.add(key);
-            triggerNote(note, track, note.start - now);
+            triggerNote(note, track, note.time - now);
           }
         });
       });
@@ -336,14 +326,21 @@ export default function Home() {
   }, [audibleTracks, isPlaying, project, stopVoices, triggerNote]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
       event.preventDefault();
       if (isPlaying) pause(); else play();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [isPlaying, pause, play]);
+
+  const activeTempo = project ? currentTempo(project.midi, position) : 120;
+  const activeKey = project ? currentKey(project, position) : { key: "C", scale: "major" as const, ticks: 0, estimated: true };
+  const sustainCount = useMemo(
+    () => project?.tracks.reduce((sum, track) => sum + (track.source.controlChanges[64]?.length ?? 0), 0) ?? 0,
+    [project],
+  );
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -353,12 +350,21 @@ export default function Home() {
     }
     try {
       pause();
-      const parsed = parseMidi(await file.arrayBuffer(), file.name);
-      setProject(parsed);
+      const midi = new Midi(await file.arrayBuffer());
+      midi.header.update();
+      const nextProject = projectFromMidi(midi, file.name);
+      setProject(nextProject);
       setPosition(0);
+      setTempoDraft(Math.round(currentTempo(midi, 0)));
+      const firstKey = currentKey(nextProject, 0);
+      setKeyDraft(firstKey.key);
+      setScaleDraft(firstKey.scale);
       setError("");
+      setShowTools(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法读取这个 MIDI 文件");
+    } finally {
+      if (inputRef.current) inputRef.current.value = "";
     }
   }
 
@@ -383,7 +389,96 @@ export default function Home() {
     }, 0);
   }
 
-  const progress = project?.duration ? (position / project.duration) * 100 : 0;
+  function addTempoEvent() {
+    if (!project) return;
+    const ticks = Math.max(0, Math.round(project.midi.header.secondsToTicks(position)));
+    project.midi.header.tempos = [
+      ...project.midi.header.tempos.filter((event) => event.ticks !== ticks),
+      { ticks, bpm: Math.max(30, Math.min(300, tempoDraft)) },
+    ].sort((a, b) => a.ticks - b.ticks);
+    project.midi.header.update();
+    setProject({ ...project });
+    scheduledRef.current.clear();
+    notify({ text: `已在 ${formatTime(position)} 设置 ${tempoDraft} BPM` });
+  }
+
+  function addKeyEvent() {
+    if (!project) return;
+    const ticks = Math.max(0, Math.round(project.midi.header.secondsToTicks(position)));
+    project.midi.header.keySignatures = [
+      ...project.midi.header.keySignatures.filter((event) => event.ticks !== ticks),
+      { ticks, key: keyDraft, scale: scaleDraft },
+    ].sort((a, b) => a.ticks - b.ticks);
+    project.midi.header.update();
+    setProject({ ...project });
+    notify({ text: `已在 ${formatTime(position)} 设置 ${formatKey({ key: keyDraft, scale: scaleDraft, ticks })}` });
+  }
+
+  function clearSustain() {
+    if (!project || !sustainCount) {
+      notify({ text: "当前文件没有 Sustain 踏板事件" });
+      return;
+    }
+    const backup = project.tracks.map((track) => [...(track.source.controlChanges[64] ?? [])]);
+    project.tracks.forEach((track) => { track.source.controlChanges[64] = []; });
+    setProject({ ...project });
+    notify({
+      text: `已删除 ${sustainCount} 个 Sustain 事件`,
+      action: {
+        label: "撤销",
+        run: () => {
+          project.tracks.forEach((track, index) => { track.source.controlChanges[64] = backup[index]; });
+          setProject({ ...project });
+          setToast(null);
+        },
+      },
+    });
+  }
+
+  function deleteTrack(id: number) {
+    if (!project) return;
+    const target = project.tracks.find((track) => track.id === id);
+    if (!target) return;
+    const midiIndex = project.midi.tracks.indexOf(target.source);
+    const uiIndex = project.tracks.indexOf(target);
+    project.midi.tracks.splice(midiIndex, 1);
+    const nextTracks = project.tracks.filter((track) => track.id !== id);
+    setProject({ ...project, tracks: nextTracks });
+    stopVoices();
+    notify({
+      text: `已删除 “${target.source.name || target.source.instrument.name}”`,
+      action: {
+        label: "撤销",
+        run: () => {
+          project.midi.tracks.splice(midiIndex, 0, target.source);
+          const restored = [...nextTracks];
+          restored.splice(uiIndex, 0, target);
+          setProject({ ...project, tracks: restored });
+          setToast(null);
+        },
+      },
+    });
+  }
+
+  function exportMidi() {
+    if (!project) return;
+    const bytes = project.midi.toArray();
+    const exportBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(exportBuffer).set(bytes);
+    const blob = new Blob([exportBuffer], { type: "audio/midi" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const base = project.name.replace(/\.midi?$/i, "") || "harmonic";
+    anchor.href = url;
+    anchor.download = `${base}-edited.mid`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify({ text: `已另存为 ${base}-edited.mid` });
+  }
+
+  const progress = duration ? Math.min(100, (position / duration) * 100) : 0;
 
   return (
     <main className="studio-shell">
@@ -393,9 +488,10 @@ export default function Home() {
           <span>HARMONIC</span>
           <small>MIDI PLAYER</small>
         </div>
-        <button className="import-small" onClick={() => inputRef.current?.click()}>
-          <span>＋</span> 导入 MIDI
-        </button>
+        <div className="header-actions">
+          {project && <button className="save-button" onClick={exportMidi}>↓ 另存为 MIDI</button>}
+          <button className="import-small" onClick={() => inputRef.current?.click()}><span>＋</span> 导入 MIDI</button>
+        </div>
       </header>
 
       {!project ? (
@@ -412,13 +508,16 @@ export default function Home() {
           <div className="empty-orbit"><span>♪</span></div>
           <p className="eyebrow">MIDI TRACK PLAYER</p>
           <h1>导入 MIDI，<br />马上开始聆听。</h1>
-          <p className="empty-copy">自动识别并拆分所有音轨。播放、暂停，<br />为每条轨道设置静音或独奏。</p>
-          <button className="primary-import" onClick={() => inputRef.current?.click()}>
-            选择 MIDI 文件 <span>↗</span>
-          </button>
-          <button className="demo-button" onClick={() => { setProject(demoProject); setPosition(0); setError(""); }}>
-            或打开示例工程
-          </button>
+          <p className="empty-copy">自动分轨、播放与编辑 Tempo / Key，<br />最后另存为新的 MIDI 文件。</p>
+          <button className="primary-import" onClick={() => inputRef.current?.click()}>选择 MIDI 文件 <span>↗</span></button>
+          <button className="demo-button" onClick={() => {
+            const demo = makeDemoProject();
+            setProject(demo);
+            setTempoDraft(112);
+            setKeyDraft("C");
+            setScaleDraft("minor");
+            setError("");
+          }}>或打开示例工程</button>
           <p className="privacy-note">支持 .mid / .midi · 文件只在浏览器本地读取</p>
           {error && <p className="error-message">{error}</p>}
         </section>
@@ -428,7 +527,7 @@ export default function Home() {
             <div>
               <p className="eyebrow">NOW LOADED</p>
               <h1>{project.name}</h1>
-              <p>{project.tracks.length} 条音轨 <i /> {project.bpm} BPM <i /> {formatTime(project.duration)}</p>
+              <p>{project.tracks.length} 条音轨 <i /> {formatTime(duration)} <i /> {project.midi.header.tempos.length} Tempo 事件 <i /> {project.midi.header.keySignatures.length || "估算"} Key</p>
             </div>
             <button className="replace-button" onClick={() => inputRef.current?.click()}>更换文件</button>
           </div>
@@ -441,17 +540,48 @@ export default function Home() {
             <div className="time-current">{formatTime(position)}</div>
             <div className="scrubber">
               <div className="scrubber-fill" style={{ width: `${progress}%` }} />
-              <input
-                aria-label="播放进度"
-                type="range"
-                min="0"
-                max={project.duration}
-                step="0.01"
-                value={position}
-                onChange={(event) => seek(Number(event.target.value))}
-              />
+              {project.midi.header.tempos.map((event, index) => (
+                <span className="event-marker tempo-marker" key={`tempo-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
+              ))}
+              {project.midi.header.keySignatures.map((event, index) => (
+                <span className="event-marker key-marker" key={`key-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
+              ))}
+              <input aria-label="播放进度" type="range" min="0" max={duration} step="0.01" value={position} onChange={(event) => seek(Number(event.target.value))} />
             </div>
-            <div className="time-total">{formatTime(project.duration)}</div>
+            <div className="time-total">{formatTime(duration)}</div>
+            <div className="live-readouts">
+              <div><span>TEMPO</span><strong>{Math.round(activeTempo)} <small>BPM</small></strong></div>
+              <div><span>KEY {activeKey.estimated ? "· EST." : ""}</span><strong>{formatKey(activeKey)}</strong></div>
+            </div>
+          </div>
+
+          <div className={`edit-tools ${showTools ? "open" : ""}`}>
+            <button className="tools-toggle" onClick={() => setShowTools((open) => !open)}>
+              <span>在播放头位置修改 Tempo / Key</span><b>{showTools ? "−" : "＋"}</b>
+            </button>
+            {showTools && (
+              <div className="tools-body">
+                <div className="event-editor">
+                  <span className="editor-label">TEMPO AT {formatTime(position)}</span>
+                  <input aria-label="新 Tempo" type="number" min="30" max="300" value={tempoDraft} onChange={(event) => setTempoDraft(Number(event.target.value))} />
+                  <small>BPM</small>
+                  <button onClick={addTempoEvent}>应用</button>
+                </div>
+                <div className="event-editor key-editor">
+                  <span className="editor-label">KEY AT {formatTime(position)}</span>
+                  <select aria-label="新 Key" value={keyDraft} onChange={(event) => setKeyDraft(event.target.value)}>
+                    {KEYS.map((key) => <option value={key} key={key}>{key}</option>)}
+                  </select>
+                  <select aria-label="新调式" value={scaleDraft} onChange={(event) => setScaleDraft(event.target.value as "major" | "minor")}>
+                    <option value="major">Major</option><option value="minor">Minor</option>
+                  </select>
+                  <button onClick={addKeyEvent}>应用</button>
+                </div>
+                <button className="sustain-button" onClick={clearSustain}>
+                  <span>⌫</span><div><strong>清除所有 Sustain</strong><small>{sustainCount} 个 CC64 事件</small></div>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="track-heading">
@@ -463,24 +593,24 @@ export default function Home() {
             {project.tracks.map((track, index) => {
               const hasSolo = project.tracks.some((item) => item.solo);
               const audible = !track.muted && (!hasSolo || track.solo);
-              const minPitch = Math.min(...track.notes.map((note) => note.midi));
-              const maxPitch = Math.max(...track.notes.map((note) => note.midi));
+              const minPitch = Math.min(...track.source.notes.map((note) => note.midi));
+              const maxPitch = Math.max(...track.source.notes.map((note) => note.midi));
               const range = Math.max(1, maxPitch - minPitch);
               return (
                 <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
                   <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
                   <div className="track-meta">
-                    <strong>{track.name}</strong>
-                    <span>CH {track.channel} · {track.channel === 10 ? "Percussion" : GM_NAMES[track.program] || "Instrument"} · {track.notes.length} notes</span>
+                    <strong>{track.source.name || track.source.instrument.name}</strong>
+                    <span>CH {track.source.channel + 1} · {track.source.instrument.name} · {track.source.notes.length} notes</span>
                   </div>
                   <div className="track-lane">
                     <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />
-                    {track.notes.slice(0, 900).map((note, noteIndex) => (
+                    {track.source.notes.slice(0, 900).map((note, noteIndex) => (
                       <i
                         key={noteIndex}
                         style={{
-                          left: `${(note.start / project.duration) * 100}%`,
-                          width: `${Math.max(0.18, (note.duration / project.duration) * 100)}%`,
+                          left: `${(note.time / duration) * 100}%`,
+                          width: `${Math.max(0.18, (note.duration / duration) * 100)}%`,
                           bottom: `${8 + ((note.midi - minPitch) / range) * 70}%`,
                           background: track.color,
                           opacity: 0.5 + note.velocity * 0.5,
@@ -490,37 +620,26 @@ export default function Home() {
                     <span className="lane-playhead" style={{ left: `${progress}%` }} />
                   </div>
                   <div className="track-controls">
-                    <button
-                      className={track.muted ? "active mute" : ""}
-                      aria-label={`${track.name} 静音`}
-                      aria-pressed={track.muted}
-                      onClick={() => toggleTrack(track.id, "muted")}
-                    >M</button>
-                    <button
-                      className={track.solo ? "active solo" : ""}
-                      aria-label={`${track.name} 独奏`}
-                      aria-pressed={track.solo}
-                      onClick={() => toggleTrack(track.id, "solo")}
-                    >S</button>
+                    <button className={track.muted ? "active mute" : ""} aria-label={`${track.source.name} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>
+                    <button className={track.solo ? "active solo" : ""} aria-label={`${track.source.name} 独奏`} aria-pressed={track.solo} onClick={() => toggleTrack(track.id, "solo")}>S</button>
+                    <button className="delete-track" aria-label={`删除 ${track.source.name}`} onClick={() => deleteTrack(track.id)}>×</button>
                   </div>
                 </article>
               );
             })}
+            {!project.tracks.length && <div className="no-tracks">所有轨道都已删除 · 可以撤销上一项操作或导入新的 MIDI</div>}
           </div>
         </section>
       )}
 
-      <input
-        ref={inputRef}
-        className="visually-hidden"
-        type="file"
-        accept=".mid,.midi,audio/midi,audio/x-midi"
-        onChange={(event) => loadFile(event.target.files?.[0])}
-      />
-      <footer>
-        <span>HARMONIC / LOCAL MIDI ENGINE</span>
-        <span><kbd>SPACE</kbd> PLAY / PAUSE</span>
-      </footer>
+      <input ref={inputRef} className="visually-hidden" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" onChange={(event) => loadFile(event.target.files?.[0])} />
+      {toast && (
+        <div className="toast" role="status">
+          <span>{toast.text}</span>
+          {toast.action && <button onClick={toast.action.run}>{toast.action.label}</button>}
+        </div>
+      )}
+      <footer><span>HARMONIC / LOCAL MIDI ENGINE</span><span><kbd>SPACE</kbd> PLAY / PAUSE</span></footer>
     </main>
   );
 }
