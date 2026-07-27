@@ -81,7 +81,7 @@ function makeDemoProject() {
   midi.header.tempos.push({ ticks: 0, bpm: 112 });
   midi.header.keySignatures.push({ ticks: 0, key: "C", scale: "minor" });
   const specs = [
-    { name: "Electric Piano", program: 4, channel: 0, base: 60, count: 24, step: 480, length: 330 },
+    { name: "Grand Piano · Kalimba", program: 0, channel: 0, base: 60, count: 24, step: 480, length: 330 },
     { name: "Warm Bass", program: 38, channel: 1, base: 36, count: 12, step: 960, length: 760 },
     { name: "Soft Drums", program: 0, channel: 9, base: 42, count: 48, step: 240, length: 70 },
     { name: "Air Pad", program: 89, channel: 2, base: 48, count: 8, step: 1440, length: 1320 },
@@ -147,14 +147,23 @@ function makeImpulse(context: AudioContext) {
 
 function presetFor(track: Track) {
   const family = track.instrument.family;
-  if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, attack: 0.002, decay: 0.11, level: 0.1, wet: 0.03 };
-  if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, attack: 0.004, decay: 1.45, level: 0.09, wet: 0.12 };
-  if (family === "bass") return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: -5, filter: 780, attack: 0.008, decay: 0.75, level: 0.1, wet: 0.03 };
-  if (family === "guitar") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 7, filter: 2700, attack: 0.003, decay: 0.85, level: 0.085, wet: 0.08 };
-  if (family === "strings" || family === "ensemble" || family === "synth pad") return { wave: "sawtooth" as OscillatorType, second: "triangle" as OscillatorType, detune: 8, filter: 1700, attack: 0.11, decay: 2.5, level: 0.052, wet: 0.2 };
-  if (family === "brass" || family === "reed" || family === "pipe") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: -7, filter: 2100, attack: 0.035, decay: 1.25, level: 0.055, wet: 0.11 };
-  if (family === "synth lead") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: 9, filter: 2800, attack: 0.01, decay: 1.0, level: 0.05, wet: 0.12 };
-  return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 6, filter: 2400, attack: 0.018, decay: 1.1, level: 0.075, wet: 0.1 };
+  if (track.instrument.number === 0 && !track.instrument.percussion) {
+    return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, attack: 0.0015, decay: 1.3, level: 0.105, wet: 0.2, kalimba: true };
+  }
+  if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, attack: 0.002, decay: 0.11, level: 0.1, wet: 0.03, kalimba: false };
+  if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, attack: 0.004, decay: 1.45, level: 0.09, wet: 0.12, kalimba: false };
+  if (family === "bass") return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: -5, filter: 780, attack: 0.008, decay: 0.75, level: 0.1, wet: 0.03, kalimba: false };
+  if (family === "guitar") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 7, filter: 2700, attack: 0.003, decay: 0.85, level: 0.085, wet: 0.08, kalimba: false };
+  if (family === "strings" || family === "ensemble" || family === "synth pad") return { wave: "sawtooth" as OscillatorType, second: "triangle" as OscillatorType, detune: 8, filter: 1700, attack: 0.11, decay: 2.5, level: 0.052, wet: 0.2, kalimba: false };
+  if (family === "brass" || family === "reed" || family === "pipe") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: -7, filter: 2100, attack: 0.035, decay: 1.25, level: 0.055, wet: 0.11, kalimba: false };
+  if (family === "synth lead") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: 9, filter: 2800, attack: 0.01, decay: 1.0, level: 0.05, wet: 0.12, kalimba: false };
+  return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 6, filter: 2400, attack: 0.018, decay: 1.1, level: 0.075, wet: 0.1, kalimba: false };
+}
+
+function instrumentLabel(track: Track) {
+  return track.instrument.number === 0 && !track.instrument.percussion
+    ? "Kalimba · Grand Piano map"
+    : track.instrument.name;
 }
 
 export default function Home() {
@@ -197,17 +206,21 @@ export default function Home() {
     const master = context.createGain();
     master.gain.value = 0.82;
     const compressor = context.createDynamicsCompressor();
-    compressor.threshold.value = -12;
-    compressor.knee.value = 12;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.005;
-    compressor.release.value = 0.22;
+    compressor.threshold.value = -22;
+    compressor.knee.value = 10;
+    compressor.ratio.value = 2;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+    const highShelf = context.createBiquadFilter();
+    highShelf.type = "highshelf";
+    highShelf.frequency.value = 4200;
+    highShelf.gain.value = 1.5;
     const reverb = context.createConvolver();
     reverb.buffer = makeImpulse(context);
     const wet = context.createGain();
-    wet.gain.value = 0.35;
+    wet.gain.value = 0.2;
     reverb.connect(wet).connect(master);
-    master.connect(compressor).connect(context.destination);
+    master.connect(highShelf).connect(compressor).connect(context.destination);
     audioRef.current = { context, master, reverb, wet };
     void context.resume();
     return audioRef.current;
@@ -249,13 +262,23 @@ export default function Home() {
     const frequency = track.source.instrument.percussion
       ? 58 + (note.midi % 12) * 11
       : 440 * 2 ** ((note.midi - 69) / 12);
-    [preset.wave, preset.second].forEach((wave, index) => {
+    const oscillators = preset.kalimba
+      ? [
+          { wave: "sine" as OscillatorType, ratio: 1, mix: 0.68, detune: -1.5 },
+          { wave: "sine" as OscillatorType, ratio: 2.76, mix: 0.23, detune: 1 },
+          { wave: "sine" as OscillatorType, ratio: 5.4, mix: 0.09, detune: -2 },
+        ]
+      : [
+          { wave: preset.wave, ratio: 1, mix: 0.72, detune: -preset.detune / 2 },
+          { wave: preset.second, ratio: track.source.instrument.percussion ? 1.9 : 1, mix: 0.28, detune: preset.detune },
+        ];
+    oscillators.forEach(({ wave, ratio, mix: mixLevel, detune }) => {
       const oscillator = context.createOscillator();
       oscillator.type = wave;
-      oscillator.frequency.setValueAtTime(frequency * (index ? (track.source.instrument.percussion ? 1.9 : 1) : 1), start);
-      oscillator.detune.value = index ? preset.detune : -preset.detune / 2;
+      oscillator.frequency.setValueAtTime(frequency * ratio, start);
+      oscillator.detune.value = detune;
       const mix = context.createGain();
-      mix.gain.value = index ? 0.28 : 0.72;
+      mix.gain.value = mixLevel;
       oscillator.connect(mix).connect(filter);
       oscillator.start(start);
       oscillator.stop(end + 0.03);
@@ -601,7 +624,7 @@ export default function Home() {
                   <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
                   <div className="track-meta">
                     <strong>{track.source.name || track.source.instrument.name}</strong>
-                    <span>CH {track.source.channel + 1} · {track.source.instrument.name} · {track.source.notes.length} notes</span>
+                    <span>CH {track.source.channel + 1} · {instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
                   </div>
                   <div className="track-lane">
                     <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />

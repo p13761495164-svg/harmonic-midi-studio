@@ -18,6 +18,9 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /toArray/);
   assert.match(page, /deleteTrack/);
   assert.match(page, /presetFor/);
+  assert.match(page, /Kalimba · Grand Piano map/);
+  assert.match(page, /ratio: 2\.76/);
+  assert.match(page, /compressor\.threshold\.value = -22/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);

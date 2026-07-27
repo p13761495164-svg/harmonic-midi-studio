@@ -7,6 +7,7 @@ A focused browser-based MIDI player with:
 - Play, pause and seek
 - Per-track mute and solo
 - Per-track instrument-family synthesis with filters and reverb
+- Acoustic Grand Piano is rendered with a bright kalimba-style resonator preset
 - Current key and tempo display
 - Add tempo and key-signature events at the playhead
 - Delete tracks and remove all sustain-pedal (CC64) events
