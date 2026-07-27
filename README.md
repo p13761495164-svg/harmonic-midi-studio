@@ -7,8 +7,8 @@ A focused browser-based MIDI player with:
 - Automatic recovery of UTF-8, GB18030/GBK, Big5 and Shift-JIS track-name mojibake
 - Play, pause and seek
 - Per-track mute and solo
-- Per-track instrument-family synthesis with filters and reverb
-- Acoustic Grand Piano is rendered with a bright kalimba-style resonator preset
+- Per-track instrument-family synthesis with filters, reverb, and natural ADSR release tails
+- Acoustic Grand Piano is rendered with a bright kalimba-style resonator preset whose overtones decay independently
 - Current key and tempo display
 - Add tempo and key-signature events at the playhead
 - Delete tracks and remove all sustain-pedal (CC64) events

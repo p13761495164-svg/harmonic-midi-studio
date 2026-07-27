@@ -33,6 +33,11 @@ type AudioGraph = {
   wet: GainNode;
 };
 
+type ActiveVoice = {
+  gain: GainNode;
+  sources: Set<AudioScheduledSourceNode>;
+};
+
 type Toast = {
   text: string;
   action?: { label: string; run: () => void };
@@ -185,16 +190,16 @@ function makeImpulse(context: AudioContext) {
 function presetFor(track: Track) {
   const family = track.instrument.family;
   if (track.instrument.number === 0 && !track.instrument.percussion) {
-    return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, attack: 0.0015, decay: 1.3, level: 0.105, wet: 0.2, kalimba: true };
+    return { wave: "sine" as OscillatorType, second: "sine" as OscillatorType, detune: 2, filter: 7600, filterEnd: 1100, attack: 0.0015, decay: 0.18, sustain: 0, release: 1.55, level: 0.105, wet: 0.2, mode: "plucked" as const, kalimba: true };
   }
-  if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, attack: 0.002, decay: 0.11, level: 0.1, wet: 0.03, kalimba: false };
-  if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, attack: 0.004, decay: 1.45, level: 0.09, wet: 0.12, kalimba: false };
-  if (family === "bass") return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: -5, filter: 780, attack: 0.008, decay: 0.75, level: 0.1, wet: 0.03, kalimba: false };
-  if (family === "guitar") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 7, filter: 2700, attack: 0.003, decay: 0.85, level: 0.085, wet: 0.08, kalimba: false };
-  if (family === "strings" || family === "ensemble" || family === "synth pad") return { wave: "sawtooth" as OscillatorType, second: "triangle" as OscillatorType, detune: 8, filter: 1700, attack: 0.11, decay: 2.5, level: 0.052, wet: 0.2, kalimba: false };
-  if (family === "brass" || family === "reed" || family === "pipe") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: -7, filter: 2100, attack: 0.035, decay: 1.25, level: 0.055, wet: 0.11, kalimba: false };
-  if (family === "synth lead") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: 9, filter: 2800, attack: 0.01, decay: 1.0, level: 0.05, wet: 0.12, kalimba: false };
-  return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 6, filter: 2400, attack: 0.018, decay: 1.1, level: 0.075, wet: 0.1, kalimba: false };
+  if (track.instrument.percussion) return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: 0, filter: 2300, filterEnd: 380, attack: 0.002, decay: 0.04, sustain: 0, release: 0.12, level: 0.1, wet: 0.03, mode: "percussion" as const, kalimba: false };
+  if (family === "piano" || family === "chromatic percussion") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 12, filter: 4200, filterEnd: 650, attack: 0.004, decay: 0.16, sustain: 0, release: 1.7, level: 0.09, wet: 0.12, mode: "plucked" as const, kalimba: false };
+  if (family === "guitar") return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 7, filter: 2900, filterEnd: 520, attack: 0.003, decay: 0.12, sustain: 0, release: 1.15, level: 0.085, wet: 0.08, mode: "plucked" as const, kalimba: false };
+  if (family === "bass") return { wave: "square" as OscillatorType, second: "sine" as OscillatorType, detune: -5, filter: 920, filterEnd: 520, attack: 0.008, decay: 0.18, sustain: 0.7, release: 0.28, level: 0.1, wet: 0.03, mode: "sustained" as const, kalimba: false };
+  if (family === "strings" || family === "ensemble" || family === "synth pad") return { wave: "sawtooth" as OscillatorType, second: "triangle" as OscillatorType, detune: 8, filter: 1850, filterEnd: 760, attack: 0.14, decay: 0.38, sustain: 0.82, release: 1.45, level: 0.052, wet: 0.2, mode: "sustained" as const, kalimba: false };
+  if (family === "brass" || family === "reed" || family === "pipe") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: -7, filter: 2200, filterEnd: 900, attack: 0.045, decay: 0.22, sustain: 0.76, release: 0.55, level: 0.055, wet: 0.11, mode: "sustained" as const, kalimba: false };
+  if (family === "synth lead") return { wave: "sawtooth" as OscillatorType, second: "square" as OscillatorType, detune: 9, filter: 2900, filterEnd: 1050, attack: 0.01, decay: 0.15, sustain: 0.7, release: 0.35, level: 0.05, wet: 0.12, mode: "sustained" as const, kalimba: false };
+  return { wave: "triangle" as OscillatorType, second: "sine" as OscillatorType, detune: 6, filter: 2500, filterEnd: 820, attack: 0.018, decay: 0.2, sustain: 0.72, release: 0.48, level: 0.075, wet: 0.1, mode: "sustained" as const, kalimba: false };
 }
 
 function instrumentLabel(track: Track) {
@@ -220,7 +225,7 @@ export default function Home() {
   const positionStartRef = useRef(0);
   const animationRef = useRef(0);
   const scheduledRef = useRef(new Set<string>());
-  const voicesRef = useRef(new Set<AudioScheduledSourceNode>());
+  const voicesRef = useRef(new Set<ActiveVoice>());
   const projectRef = useRef(project);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -264,8 +269,17 @@ export default function Home() {
   }, []);
 
   const stopVoices = useCallback(() => {
+    const graph = audioRef.current;
+    if (!graph) return;
+    const now = graph.context.currentTime;
     voicesRef.current.forEach((voice) => {
-      try { voice.stop(); } catch {}
+      try {
+        voice.gain.gain.cancelScheduledValues(now);
+        voice.gain.gain.setTargetAtTime(0.0001, now, 0.009);
+      } catch {}
+      voice.sources.forEach((source) => {
+        try { source.stop(now + 0.045); } catch {}
+      });
     });
     voicesRef.current.clear();
   }, []);
@@ -281,46 +295,68 @@ export default function Home() {
     const { context, master, reverb } = graph;
     const preset = presetFor(track.source);
     const start = context.currentTime + Math.max(0, delay);
-    const naturalDuration = track.source.instrument.percussion ? 0.12 : Math.min(note.duration, preset.decay);
-    const end = start + Math.max(0.05, naturalDuration);
-    const gain = context.createGain();
+    const noteOff = start + Math.max(0.05, note.duration);
+    const end = preset.mode === "sustained" ? noteOff + preset.release : start + preset.release;
+    const output = context.createGain();
+    output.gain.value = 1;
     const filter = context.createBiquadFilter();
     filter.type = "lowpass";
     filter.frequency.setValueAtTime(preset.filter, start);
+    if (preset.mode === "sustained") {
+      const filterDecayEnd = Math.min(noteOff, start + preset.attack + preset.decay);
+      filter.frequency.exponentialRampToValueAtTime(Math.max(preset.filterEnd, preset.filter * 0.72), filterDecayEnd);
+      filter.frequency.setValueAtTime(Math.max(preset.filterEnd, preset.filter * 0.72), noteOff);
+    }
+    filter.frequency.exponentialRampToValueAtTime(preset.filterEnd, end);
     filter.Q.value = track.source.instrument.percussion ? 0.3 : 0.8;
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.008, note.velocity * preset.level), start + preset.attack);
-    gain.gain.exponentialRampToValueAtTime(0.0001, end);
-    filter.connect(gain);
-    gain.connect(master);
+    filter.connect(output);
+    output.connect(master);
     const send = context.createGain();
     send.gain.value = preset.wet;
-    gain.connect(send).connect(reverb);
+    output.connect(send).connect(reverb);
     const frequency = track.source.instrument.percussion
       ? 58 + (note.midi % 12) * 11
       : 440 * 2 ** ((note.midi - 69) / 12);
     const oscillators = preset.kalimba
       ? [
-          { wave: "sine" as OscillatorType, ratio: 1, mix: 0.68, detune: -1.5 },
-          { wave: "sine" as OscillatorType, ratio: 2.76, mix: 0.23, detune: 1 },
-          { wave: "sine" as OscillatorType, ratio: 5.4, mix: 0.09, detune: -2 },
+          { wave: "sine" as OscillatorType, ratio: 1, mix: 0.68, detune: -1.5, decayScale: 1 },
+          { wave: "sine" as OscillatorType, ratio: 2.76, mix: 0.23, detune: 1, decayScale: 0.48 },
+          { wave: "sine" as OscillatorType, ratio: 5.4, mix: 0.09, detune: -2, decayScale: 0.22 },
         ]
       : [
-          { wave: preset.wave, ratio: 1, mix: 0.72, detune: -preset.detune / 2 },
-          { wave: preset.second, ratio: track.source.instrument.percussion ? 1.9 : 1, mix: 0.28, detune: preset.detune },
+          { wave: preset.wave, ratio: 1, mix: 0.72, detune: -preset.detune / 2, decayScale: 1 },
+          { wave: preset.second, ratio: track.source.instrument.percussion ? 1.9 : 1, mix: 0.28, detune: preset.detune, decayScale: preset.mode === "sustained" ? 1 : 0.62 },
         ];
-    oscillators.forEach(({ wave, ratio, mix: mixLevel, detune }) => {
+    const voice: ActiveVoice = { gain: output, sources: new Set() };
+    voicesRef.current.add(voice);
+    oscillators.forEach(({ wave, ratio, mix: mixLevel, detune, decayScale }) => {
       const oscillator = context.createOscillator();
       oscillator.type = wave;
       oscillator.frequency.setValueAtTime(frequency * ratio, start);
       oscillator.detune.value = detune;
       const mix = context.createGain();
-      mix.gain.value = mixLevel;
+      const peak = Math.max(0.0002, note.velocity * preset.level * mixLevel);
+      const attackEnd = Math.min(noteOff, start + preset.attack);
+      mix.gain.setValueAtTime(0.0001, start);
+      mix.gain.exponentialRampToValueAtTime(peak, attackEnd);
+      if (preset.mode === "sustained") {
+        const decayEnd = Math.min(noteOff, attackEnd + preset.decay);
+        const sustainLevel = Math.max(0.0002, peak * preset.sustain);
+        mix.gain.exponentialRampToValueAtTime(sustainLevel, decayEnd);
+        mix.gain.setValueAtTime(sustainLevel, noteOff);
+        mix.gain.exponentialRampToValueAtTime(0.0001, end);
+      } else {
+        const partialEnd = start + Math.max(0.055, preset.release * decayScale);
+        mix.gain.exponentialRampToValueAtTime(0.0001, partialEnd);
+      }
       oscillator.connect(mix).connect(filter);
       oscillator.start(start);
-      oscillator.stop(end + 0.03);
-      voicesRef.current.add(oscillator);
-      oscillator.onended = () => voicesRef.current.delete(oscillator);
+      oscillator.stop(end + 0.04);
+      voice.sources.add(oscillator);
+      oscillator.onended = () => {
+        voice.sources.delete(oscillator);
+        if (!voice.sources.size) voicesRef.current.delete(voice);
+      };
     });
     if (track.source.instrument.percussion) {
       const buffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.08), context.sampleRate);
@@ -329,13 +365,14 @@ export default function Home() {
       const noise = context.createBufferSource();
       noise.buffer = buffer;
       const noiseGain = context.createGain();
+      const noiseVoice: ActiveVoice = { gain: noiseGain, sources: new Set([noise]) };
       noiseGain.gain.setValueAtTime(note.velocity * 0.04, start);
       noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
       noise.connect(noiseGain).connect(master);
       noise.start(start);
       noise.stop(start + 0.08);
-      voicesRef.current.add(noise);
-      noise.onended = () => voicesRef.current.delete(noise);
+      voicesRef.current.add(noiseVoice);
+      noise.onended = () => voicesRef.current.delete(noiseVoice);
     }
   }, [ensureAudio]);
 
