@@ -13,7 +13,7 @@ $pdo = db();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $favoriteOnly = ($_GET['favorites'] ?? '') === '1';
-    $sql = 'SELECT * FROM instrument_presets';
+    $sql = 'SELECT * FROM harmonic_instrument_presets';
     if ($favoriteOnly) {
         $sql .= ' WHERE is_favorite = 1';
     }
@@ -59,7 +59,7 @@ foreach ($ranges as $key => [$min, $max]) {
 $favorite = !empty($input['favorite']) ? 1 : 0;
 
 $statement = $pdo->prepare(
-    'UPDATE instrument_presets SET
+    'UPDATE harmonic_instrument_presets SET
     attack = ?, decay_seconds = ?, sustain = ?, release_seconds = ?, brightness = ?,
     resonance = ?, harmonics = ?, volume = ?, reverb = ?, is_favorite = ?
     WHERE program = ?'
@@ -69,6 +69,6 @@ $statement->execute([
     $values['resonance'], $values['harmonics'], $values['level'], $values['wet'], $favorite, $program,
 ]);
 
-$statement = $pdo->prepare('SELECT * FROM instrument_presets WHERE program = ?');
+$statement = $pdo->prepare('SELECT * FROM harmonic_instrument_presets WHERE program = ?');
 $statement->execute([$program]);
 respond(['instrument' => preset_payload($statement->fetch())]);

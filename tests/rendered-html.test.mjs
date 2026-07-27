@@ -66,9 +66,10 @@ test("ships the PHP and MySQL timbre manager", async () => {
   assert.match(manager, /永久保存到 MySQL/);
   assert.match(manager, /favorite/);
   assert.match(api, /require_admin/);
-  assert.match(api, /UPDATE instrument_presets/);
+  assert.match(api, /UPDATE harmonic_instrument_presets/);
   assert.match(bootstrap, /GM_NAMES/);
   assert.match(bootstrap, /hash_equals/);
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS instrument_presets/);
+  assert.match(bootstrap, /shared\/database\.php/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS harmonic_instrument_presets/);
   assert.match(packageJson, /build:php/);
 });

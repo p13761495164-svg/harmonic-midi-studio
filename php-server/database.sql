@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS instrument_presets (
+CREATE TABLE IF NOT EXISTS harmonic_instrument_presets (
     program TINYINT UNSIGNED NOT NULL PRIMARY KEY,
     name VARCHAR(96) NOT NULL,
     family VARCHAR(48) NOT NULL,
@@ -13,6 +13,6 @@ CREATE TABLE IF NOT EXISTS instrument_presets (
     reverb DECIMAL(6,4) NOT NULL,
     is_favorite TINYINT(1) NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_instrument_favorite (is_favorite),
-    INDEX idx_instrument_family (family)
+    INDEX idx_harmonic_instrument_favorite (is_favorite),
+    INDEX idx_harmonic_instrument_family (family)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

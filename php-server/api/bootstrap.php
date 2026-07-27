@@ -45,15 +45,30 @@ function respond(array $payload, int $status = 200): never
 
 function config(): array
 {
-    $path = dirname(__DIR__, 2) . '/config.php';
-    if (!is_file($path)) {
-        respond(['error' => '服务器尚未配置 config.php'], 503);
+    $siteRoot = dirname(__DIR__, 3);
+    $databasePath = $siteRoot . '/shared/database.php';
+    if (!is_file($databasePath)) {
+        respond(['error' => '找不到 personalApp/shared/database.php'], 503);
     }
-    $config = require $path;
-    if (!is_array($config)) {
-        respond(['error' => 'config.php 格式错误'], 500);
+    require $databasePath;
+
+    $appConfigPath = dirname(__DIR__) . '/config.php';
+    if (!is_file($appConfigPath)) {
+        respond(['error' => '音色管理尚未配置 config.php'], 503);
     }
-    return $config;
+    $appConfig = require $appConfigPath;
+    if (!is_array($appConfig)) {
+        respond(['error' => '音色管理 config.php 格式错误'], 500);
+    }
+
+    return [
+        'db_host' => $servername ?? '127.0.0.1',
+        'db_port' => 3306,
+        'db_name' => $dbname ?? '',
+        'db_user' => $username ?? '',
+        'db_password' => $password ?? '',
+        'admin_key' => $appConfig['admin_key'] ?? '',
+    ];
 }
 
 function db(): PDO
@@ -78,12 +93,33 @@ function db(): PDO
     } catch (Throwable $error) {
         respond(['error' => '无法连接 MySQL'], 503);
     }
-    try {
-        seed_instruments($pdo);
-    } catch (Throwable $error) {
-        respond(['error' => '数据库表尚未安装，请先导入 database.sql'], 503);
-    }
+    ensure_schema($pdo);
+    seed_instruments($pdo);
     return $pdo;
+}
+
+function ensure_schema(PDO $pdo): void
+{
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS harmonic_instrument_presets (
+            program TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+            name VARCHAR(96) NOT NULL,
+            family VARCHAR(48) NOT NULL,
+            attack DECIMAL(7,4) NOT NULL,
+            decay_seconds DECIMAL(7,4) NOT NULL,
+            sustain DECIMAL(6,4) NOT NULL,
+            release_seconds DECIMAL(7,4) NOT NULL,
+            brightness SMALLINT UNSIGNED NOT NULL,
+            resonance DECIMAL(6,3) NOT NULL,
+            harmonics DECIMAL(6,3) NOT NULL,
+            volume DECIMAL(6,4) NOT NULL,
+            reverb DECIMAL(6,4) NOT NULL,
+            is_favorite TINYINT(1) NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_harmonic_instrument_favorite (is_favorite),
+            INDEX idx_harmonic_instrument_family (family)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
 }
 
 function defaults_for_program(int $program): array
@@ -119,12 +155,12 @@ function defaults_for_program(int $program): array
 
 function seed_instruments(PDO $pdo): void
 {
-    $count = (int)$pdo->query('SELECT COUNT(*) FROM instrument_presets')->fetchColumn();
+    $count = (int)$pdo->query('SELECT COUNT(*) FROM harmonic_instrument_presets')->fetchColumn();
     if ($count >= 128) {
         return;
     }
     $statement = $pdo->prepare(
-        'INSERT IGNORE INTO instrument_presets
+        'INSERT IGNORE INTO harmonic_instrument_presets
         (program, name, family, attack, decay_seconds, sustain, release_seconds, brightness, resonance, harmonics, volume, reverb)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
