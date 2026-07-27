@@ -238,20 +238,6 @@ function timbreKey(track: Track) {
   return track.instrument.percussion ? "percussion" : `program-${track.instrument.number}`;
 }
 
-function editableSettings(preset: SynthPreset): TimbreSettings {
-  return {
-    attack: preset.attack,
-    decay: preset.decay,
-    sustain: preset.sustain,
-    release: preset.release,
-    filter: preset.filter,
-    level: preset.level,
-    wet: preset.wet,
-    resonance: preset.resonance ?? 0.8,
-    harmonics: preset.harmonics ?? 0.28,
-  };
-}
-
 function clampTimbre(settings: TimbreSettings): TimbreSettings {
   const clamp = (value: number, min: number, max: number, fallback: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : fallback));
   return {
@@ -301,10 +287,11 @@ export default function Home() {
   const [showTools, setShowTools] = useState(false);
   const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
   const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
-  const [timbreTrackId, setTimbreTrackId] = useState<number | null>(null);
-  const [timbreDraft, setTimbreDraft] = useState<TimbreSettings | null>(null);
   const [cloudInstruments, setCloudInstruments] = useState<CloudInstrument[]>([]);
   const [trackTimbreOverrides, setTrackTimbreOverrides] = useState<Record<number, number>>({});
+  const [timbrePickerTrackId, setTimbrePickerTrackId] = useState<number | null>(null);
+  const [timbrePickerFavoritesOnly, setTimbrePickerFavoritesOnly] = useState(false);
+  const [timbrePickerQuery, setTimbrePickerQuery] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const trackListRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<AudioGraph | null>(null);
@@ -600,8 +587,7 @@ export default function Home() {
       setScaleDraft(firstKey.scale);
       setError("");
       setShowTools(false);
-      setTimbreTrackId(null);
-      setTimbreDraft(null);
+      setTimbrePickerTrackId(null);
       setTrackTimbreOverrides({});
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法读取这个 MIDI 文件");
@@ -713,51 +699,6 @@ export default function Home() {
     });
   }
 
-  function openTimbrePanel(track: UiTrack) {
-    const base = editableSettings(presetFor(track.source));
-    const saved = savedTimbres[timbreKey(track.source)];
-    setTimbreTrackId(track.id);
-    setTimbreDraft(saved ? clampTimbre(saved) : base);
-  }
-
-  function previewTimbre() {
-    if (!project || timbreTrackId === null || !timbreDraft) return;
-    const track = project.tracks.find((item) => item.id === timbreTrackId);
-    if (!track || !track.source.notes.length) return;
-    const notes = [...track.source.notes].sort((a, b) => a.midi - b.midi);
-    const note = notes[Math.floor(notes.length / 2)];
-    stopVoices();
-    triggerNote(note, track, 0, timbreDraft, presetFor(track.source).mode === "sustained" ? 0.85 : 0.65);
-  }
-
-  function saveTimbre() {
-    if (!project || timbreTrackId === null || !timbreDraft) return;
-    const track = project.tracks.find((item) => item.id === timbreTrackId);
-    if (!track) return;
-    const key = timbreKey(track.source);
-    const settings = clampTimbre(timbreDraft);
-    const next = { ...savedTimbres, [key]: settings };
-    setSavedTimbres(next);
-    window.localStorage.setItem(TIMBRE_STORAGE_KEY, JSON.stringify(next));
-    setTimbreDraft(settings);
-    scheduledRef.current.clear();
-    notify({ text: `已永久保存 ${instrumentLabel(track.source)} 的音色` });
-  }
-
-  function resetTimbre() {
-    if (!project || timbreTrackId === null) return;
-    const track = project.tracks.find((item) => item.id === timbreTrackId);
-    if (!track) return;
-    const key = timbreKey(track.source);
-    const next = { ...savedTimbres };
-    delete next[key];
-    setSavedTimbres(next);
-    window.localStorage.setItem(TIMBRE_STORAGE_KEY, JSON.stringify(next));
-    setTimbreDraft(editableSettings(presetFor(track.source)));
-    scheduledRef.current.clear();
-    notify({ text: `已恢复 ${instrumentLabel(track.source)} 的默认音色` });
-  }
-
   function exportMidi() {
     if (!project) return;
     const exportCopy = project.midi.clone();
@@ -785,8 +726,12 @@ export default function Home() {
   }
 
   const progress = duration ? Math.min(100, (position / duration) * 100) : 0;
-  const timbreTrack = timbreTrackId === null ? null : project?.tracks.find((track) => track.id === timbreTrackId) ?? null;
-  const timbreMode = timbreTrack ? presetFor(timbreTrack.source).mode : null;
+  const timbrePickerTrack = timbrePickerTrackId === null ? null : project?.tracks.find((track) => track.id === timbrePickerTrackId) ?? null;
+  const pickerInstruments = cloudInstruments.filter((instrument) => {
+    const query = timbrePickerQuery.trim().toLowerCase();
+    const matchesQuery = !query || `${instrument.program + 1} ${instrument.name} ${instrument.family}`.toLowerCase().includes(query);
+    return matchesQuery && (!timbrePickerFavoritesOnly || instrument.favorite);
+  });
 
   return (
     <main className="studio-shell">
@@ -853,10 +798,10 @@ export default function Home() {
               style={laneGeometry.width > 0 ? { left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` } : undefined}
             >
               <div className="scrubber-fill" style={{ width: `${progress}%` }} />
-              {project.midi.header.tempos.map((event, index) => (
+              {project.midi.header.tempos.filter((event) => event.ticks > 0).map((event, index) => (
                 <span className="event-marker tempo-marker" key={`tempo-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
               ))}
-              {project.midi.header.keySignatures.map((event, index) => (
+              {project.midi.header.keySignatures.filter((event) => event.ticks > 0).map((event, index) => (
                 <span className="event-marker key-marker" key={`key-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
               ))}
               <input aria-label="播放进度" type="range" min="0" max={duration} step="0.01" value={position} onChange={(event) => seek(Number(event.target.value))} />
@@ -918,24 +863,16 @@ export default function Home() {
               const range = Math.max(1, maxPitch - minPitch);
               const overrideProgram = trackTimbreOverrides[track.id];
               const overrideTimbre = cloudInstruments.find((instrument) => instrument.program === overrideProgram);
+              const effectiveProgram = overrideProgram ?? track.source.instrument.number;
               return (
                 <article className={`track-row ${audible ? "" : "inaudible"}`} key={track.id}>
                   <div className="track-index" style={{ color: track.color }}>{String(index + 1).padStart(2, "0")}</div>
                   <div className="track-meta">
-                    <button className="track-meta-open" onClick={() => openTimbrePanel(track)} aria-label={`调节 ${instrumentLabel(track.source)} 音色`}>
+                    <button className="track-meta-open" onClick={() => { setTimbrePickerTrackId(track.id); setTimbrePickerFavoritesOnly(false); setTimbrePickerQuery(""); }} aria-label={`替换 ${instrumentLabel(track.source)} 音色`}>
                       <strong>{track.displayName}</strong>
-                      <span>CH {track.source.channel + 1} · {overrideTimbre?.name ?? instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
+                      <span>CH {track.source.channel + 1} · P{String(effectiveProgram + 1).padStart(3, "0")} · {overrideTimbre?.name ?? instrumentLabel(track.source)} · {track.source.notes.length} notes</span>
+                      <small>点击选择其它音色或收藏音色</small>
                     </button>
-                    <select
-                      className="track-timbre-select"
-                      aria-label={`${track.displayName} 收藏音色`}
-                      value={overrideProgram ?? ""}
-                      onChange={(event) => changeTrackTimbre(track.id, event.target.value)}
-                    >
-                      <option value="">原始音色</option>
-                      {favoriteTimbres.map((instrument) => <option value={instrument.program} key={instrument.program}>★ {instrument.name}</option>)}
-                      {!favoriteTimbres.length && <option value="" disabled>请先在音色管理中收藏</option>}
-                    </select>
                   </div>
                   <div className="track-lane">
                     <div className="track-progress" style={{ width: `${progress}%`, background: track.color }} />
@@ -966,59 +903,35 @@ export default function Home() {
       )}
 
       <input ref={inputRef} className="visually-hidden" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" onChange={(event) => loadFile(event.target.files?.[0])} />
-      {timbreTrack && timbreDraft && (
-        <div className="timbre-backdrop" onMouseDown={() => setTimbreTrackId(null)}>
-          <aside className="timbre-panel" role="dialog" aria-modal="true" aria-labelledby="timbre-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="timbre-titlebar">
+      {timbrePickerTrack && (
+        <div className="timbre-picker-backdrop" onMouseDown={() => setTimbrePickerTrackId(null)}>
+          <aside className="timbre-picker" role="dialog" aria-modal="true" aria-labelledby="timbre-picker-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="timbre-picker-titlebar">
               <div>
-                <span>INSTRUMENT SOUND</span>
-                <h2 id="timbre-title">{instrumentLabel(timbreTrack.source)}</h2>
-                <p>Program {timbreTrack.source.instrument.number} · 保存后自动用于其他 MIDI</p>
+                <span>REPLACE INSTRUMENT</span>
+                <h2 id="timbre-picker-title">{timbrePickerTrack.displayName}</h2>
+                <p>选择一个 GM 音色立即替换当前轨道</p>
               </div>
-              <button aria-label="关闭音色面板" onClick={() => setTimbreTrackId(null)}>×</button>
+              <button aria-label="关闭音色选择" onClick={() => setTimbrePickerTrackId(null)}>×</button>
             </div>
-
-            <div className="timbre-controls">
-              <label>
-                <span>起音 <b>{Math.round(timbreDraft.attack * 1000)} ms</b></span>
-                <input type="range" min="0.001" max="0.4" step="0.001" value={timbreDraft.attack} onChange={(event) => setTimbreDraft({ ...timbreDraft, attack: Number(event.target.value) })} />
-              </label>
-              {timbreMode === "sustained" && (
-                <>
-                  <label>
-                    <span>衰减 <b>{timbreDraft.decay.toFixed(2)} s</b></span>
-                    <input type="range" min="0.03" max="1.2" step="0.01" value={timbreDraft.decay} onChange={(event) => setTimbreDraft({ ...timbreDraft, decay: Number(event.target.value) })} />
-                  </label>
-                  <label>
-                    <span>保持音量 <b>{Math.round(timbreDraft.sustain * 100)}%</b></span>
-                    <input type="range" min="0" max="1" step="0.01" value={timbreDraft.sustain} onChange={(event) => setTimbreDraft({ ...timbreDraft, sustain: Number(event.target.value) })} />
-                  </label>
-                </>
-              )}
-              <label>
-                <span>自然尾音 <b>{timbreDraft.release.toFixed(2)} s</b></span>
-                <input type="range" min="0.08" max="4" step="0.01" value={timbreDraft.release} onChange={(event) => setTimbreDraft({ ...timbreDraft, release: Number(event.target.value) })} />
-              </label>
-              <label>
-                <span>明亮度 <b>{Math.round(timbreDraft.filter)} Hz</b></span>
-                <input type="range" min="300" max="10000" step="50" value={timbreDraft.filter} onChange={(event) => setTimbreDraft({ ...timbreDraft, filter: Number(event.target.value) })} />
-              </label>
-              <label>
-                <span>音量 <b>{Math.round((timbreDraft.level / 0.2) * 100)}%</b></span>
-                <input type="range" min="0.02" max="0.2" step="0.002" value={timbreDraft.level} onChange={(event) => setTimbreDraft({ ...timbreDraft, level: Number(event.target.value) })} />
-              </label>
-              <label>
-                <span>空间感 <b>{Math.round(timbreDraft.wet * 200)}%</b></span>
-                <input type="range" min="0" max="0.5" step="0.01" value={timbreDraft.wet} onChange={(event) => setTimbreDraft({ ...timbreDraft, wet: Number(event.target.value) })} />
-              </label>
+            <div className="timbre-picker-filters">
+              <input aria-label="搜索替换音色" placeholder="搜索名称或编号" value={timbrePickerQuery} onChange={(event) => setTimbrePickerQuery(event.target.value)} />
+              <button className={!timbrePickerFavoritesOnly ? "active" : ""} onClick={() => setTimbrePickerFavoritesOnly(false)}>全部 128</button>
+              <button className={timbrePickerFavoritesOnly ? "active favorite" : ""} onClick={() => setTimbrePickerFavoritesOnly(true)}>★ 收藏 {favoriteTimbres.length}</button>
             </div>
-
-            <div className="timbre-actions">
-              <button className="preview-timbre" onClick={previewTimbre}>▶ 试听当前设置</button>
-              <button onClick={resetTimbre}>恢复默认</button>
-              <button className="save-timbre" onClick={saveTimbre}>保存音色</button>
+            <div className="timbre-picker-list">
+              <button className="original" onClick={() => { changeTrackTimbre(timbrePickerTrack.id, ""); setTimbrePickerTrackId(null); }}>
+                <span>—</span><strong>使用 MIDI 原始音色</strong><small>P{String(timbrePickerTrack.source.instrument.number + 1).padStart(3, "0")}</small>
+              </button>
+              {pickerInstruments.map((instrument) => (
+                <button key={instrument.program} onClick={() => { changeTrackTimbre(timbrePickerTrack.id, String(instrument.program)); setTimbrePickerTrackId(null); }}>
+                  <span>{String(instrument.program + 1).padStart(3, "0")}</span>
+                  <strong>{instrument.name}</strong>
+                  <small>{instrument.favorite ? "★" : instrument.family}</small>
+                </button>
+              ))}
+              {!pickerInstruments.length && <p>还没有收藏音色，可到“音色管理”中点击星标收藏。</p>}
             </div>
-            <p className="timbre-storage-note">音色保存在此浏览器中；同一 MIDI 乐器编号会自动调用。</p>
           </aside>
         </div>
       )}

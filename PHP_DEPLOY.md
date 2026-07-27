@@ -18,7 +18,7 @@
 - 数据库连接直接读取站点现有的 `/shared/database.php`，不会复制或公开 MySQL 密码。
 - 音色数据保存在独立表 `harmonic_instrument_presets`。
 - 安装脚本会把 `Harmonic MIDI` 写入现有 `applist_apps`。
-- 音色管理密钥保存在子应用自己的 `config.php`，首次部署自动随机生成，后续发布会保留。
+- 音色参数和收藏可直接保存到 MySQL，不再需要管理密钥。
 - 静态资源使用 `/apps/harmonic-midi` 作为 base path。
 
 ## 构建

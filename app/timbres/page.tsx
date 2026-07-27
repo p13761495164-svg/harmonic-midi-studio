@@ -37,14 +37,12 @@ export default function TimbreManager() {
   const [draft, setDraft] = useState<CloudInstrument | null>(null);
   const [query, setQuery] = useState("");
   const [favoriteOnly, setFavoriteOnly] = useState(false);
-  const [adminKey, setAdminKey] = useState("");
   const [status, setStatus] = useState("正在连接 MySQL 音色库…");
   const [saving, setSaving] = useState(false);
   const audioRef = useRef<AudioContext | null>(null);
   const voicesRef = useRef<PreviewVoice[]>([]);
 
   useEffect(() => {
-    setAdminKey(window.sessionStorage.getItem("harmonic-admin-key") ?? "");
     fetchInstruments()
       .then((items) => {
         setInstruments(items);
@@ -153,14 +151,9 @@ export default function TimbreManager() {
 
   async function save() {
     if (!draft) return;
-    if (!adminKey.trim()) {
-      setStatus("请输入管理密钥后再保存");
-      return;
-    }
     setSaving(true);
-    window.sessionStorage.setItem("harmonic-admin-key", adminKey);
     try {
-      const saved = await updateInstrument(draft, adminKey);
+      const saved = await updateInstrument(draft);
       setInstruments((current) => current.map((item) => item.program === saved.program ? saved : item));
       setDraft(saved);
       setStatus(`已永久保存 ${saved.name} 到 MySQL`);
@@ -168,6 +161,22 @@ export default function TimbreManager() {
       setStatus(error instanceof Error ? error.message : "保存失败");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleFavorite(instrument: CloudInstrument) {
+    const next = { ...instrument, favorite: !instrument.favorite };
+    setInstruments((current) => current.map((item) => item.program === next.program ? next : item));
+    if (draft?.program === next.program) setDraft(next);
+    try {
+      const saved = await updateInstrument(next);
+      setInstruments((current) => current.map((item) => item.program === saved.program ? saved : item));
+      if (draft?.program === saved.program) setDraft(saved);
+      setStatus(saved.favorite ? `已收藏 ${saved.name}` : `已取消收藏 ${saved.name}`);
+    } catch (error) {
+      setInstruments((current) => current.map((item) => item.program === instrument.program ? instrument : item));
+      if (draft?.program === instrument.program) setDraft(instrument);
+      setStatus(error instanceof Error ? error.message : "收藏失败");
     }
   }
 
@@ -190,11 +199,15 @@ export default function TimbreManager() {
           </div>
           <div className="instrument-list">
             {visible.map((instrument) => (
-              <button className={selectedProgram === instrument.program ? "selected" : ""} key={instrument.program} onClick={() => selectInstrument(instrument)}>
-                <span>{String(instrument.program + 1).padStart(3, "0")}</span>
-                <div><strong>{instrument.name}</strong><small>{instrument.family}</small></div>
-                <b>{instrument.favorite ? "★" : "☆"}</b>
-              </button>
+              <div className={selectedProgram === instrument.program ? "selected" : ""} key={instrument.program}>
+                <button className="instrument-select" onClick={() => selectInstrument(instrument)}>
+                  <span>{String(instrument.program + 1).padStart(3, "0")}</span>
+                  <span><strong>{instrument.name}</strong><small>{instrument.family}</small></span>
+                </button>
+                <button className={instrument.favorite ? "instrument-favorite active" : "instrument-favorite"} aria-label={instrument.favorite ? `取消收藏 ${instrument.name}` : `收藏 ${instrument.name}`} onClick={() => toggleFavorite(instrument)}>
+                  {instrument.favorite ? "★" : "☆"}
+                </button>
+              </div>
             ))}
             {!visible.length && <p>没有匹配的乐器</p>}
           </div>
@@ -204,7 +217,7 @@ export default function TimbreManager() {
           <section className="cloud-timbre-editor">
             <div className="cloud-editor-title">
               <div><span>PROGRAM {draft.program + 1}</span><h2>{draft.name}</h2><p>{draft.family}</p></div>
-              <button className={draft.favorite ? "favorite active" : "favorite"} onClick={() => change("favorite", !draft.favorite)}>
+              <button className={draft.favorite ? "favorite active" : "favorite"} onClick={() => toggleFavorite(draft)}>
                 {draft.favorite ? "★ 已收藏" : "☆ 收藏音色"}
               </button>
             </div>
@@ -230,7 +243,6 @@ export default function TimbreManager() {
 
             <div className="cloud-editor-actions">
               <button className="scale-preview" onClick={previewScale}>▶ 试听 1 2 3 4 5 6 7 1</button>
-              <label><span>管理密钥</span><input type="password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} placeholder="只保存在当前会话" /></label>
               <button className="cloud-save" disabled={saving} onClick={save}>{saving ? "保存中…" : "永久保存到 MySQL"}</button>
             </div>
           </section>

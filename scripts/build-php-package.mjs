@@ -11,7 +11,6 @@ await mkdir(appTarget, { recursive: true });
 await cp(resolve(root, "out"), appTarget, { recursive: true });
 await cp(resolve(root, "php-server", "api"), resolve(appTarget, "api"), { recursive: true });
 await cp(resolve(root, "php-server", "public.htaccess"), resolve(appTarget, ".htaccess"));
-await cp(resolve(root, "php-server", "config.example.php"), resolve(appTarget, "config.example.php"));
 await cp(resolve(root, "php-server", "static-index.php"), resolve(appTarget, "index.php"));
 await cp(resolve(root, "php-server", "static-index.php"), resolve(appTarget, "timbres", "index.php"));
 await cp(resolve(root, "php-server", "database.sql"), resolve(target, "database.sql"));

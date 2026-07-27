@@ -72,7 +72,7 @@ trap close_ssh_control EXIT
 echo "Scoped target: ${remote_target_path}"
 
 if [[ "${DRY_RUN}" == true ]]; then
-    rsync -azn --itemize-changes --exclude 'config.php' \
+    rsync -azn --itemize-changes \
         -e "${rsync_ssh}" \
         "${SOURCE_PATH}/" "${remote_host}:${remote_target_path}/"
     echo "Dry run complete. No remote files were changed."
@@ -82,19 +82,14 @@ fi
 ssh "${ssh_args[@]}" "${remote_host}" \
     "mkdir -p '${remote_apps}' && test ! -e '${remote_stage}' && mkdir '${remote_stage}'"
 
-rsync -az --itemize-changes --exclude 'config.php' \
+rsync -az --itemize-changes \
     -e "${rsync_ssh}" \
     "${SOURCE_PATH}/" "${remote_host}:${remote_stage}/"
 
 ssh "${ssh_args[@]}" "${remote_host}" "
 set -eu
-if [ -f '${remote_target_path}/config.php' ]; then
-    cp '${remote_target_path}/config.php' '${remote_stage}/config.php'
-fi
 find '${remote_stage}' -type f -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 php '${remote_stage}/api/install.php'
-chgrp www '${remote_stage}/config.php'
-chmod 0640 '${remote_stage}/config.php'
 if [ -e '${remote_target_path}' ]; then
     mv '${remote_target_path}' '${remote_backup}'
 fi

@@ -36,10 +36,10 @@ export async function fetchInstruments(favoritesOnly = false) {
   return payload.instruments;
 }
 
-export async function updateInstrument(instrument: CloudInstrument, adminKey: string) {
+export async function updateInstrument(instrument: CloudInstrument) {
   const response = await fetch(instrumentsApiUrl(), {
     method: "PUT",
-    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(instrument),
   });
   const payload = await response.json().catch(() => null) as { instrument?: CloudInstrument; error?: string } | null;

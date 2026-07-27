@@ -7,19 +7,6 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-$configPath = dirname(__DIR__) . '/config.php';
-if (!is_file($configPath)) {
-    $configSource = "<?php\n\nreturn [\n    'admin_key' => "
-        . var_export(bin2hex(random_bytes(32)), true)
-        . ",\n];\n";
-    if (file_put_contents($configPath, $configSource, LOCK_EX) === false) {
-        fwrite(STDERR, "无法创建 config.php\n");
-        exit(1);
-    }
-    @chmod($configPath, 0600);
-    echo "Created a private admin key in config.php.\n";
-}
-
 require __DIR__ . '/bootstrap.php';
 
 $pdo = db();

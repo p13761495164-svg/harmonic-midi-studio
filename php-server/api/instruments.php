@@ -26,7 +26,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
     respond(['error' => '不支持的请求方法'], 405);
 }
 
-require_admin();
 $input = json_decode(file_get_contents('php://input'), true);
 if (!is_array($input)) {
     respond(['error' => '请求内容不是有效 JSON'], 400);

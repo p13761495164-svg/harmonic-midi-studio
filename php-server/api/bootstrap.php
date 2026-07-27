@@ -52,22 +52,12 @@ function config(): array
     }
     require $databasePath;
 
-    $appConfigPath = dirname(__DIR__) . '/config.php';
-    if (!is_file($appConfigPath)) {
-        respond(['error' => '音色管理尚未配置 config.php'], 503);
-    }
-    $appConfig = require $appConfigPath;
-    if (!is_array($appConfig)) {
-        respond(['error' => '音色管理 config.php 格式错误'], 500);
-    }
-
     return [
         'db_host' => $servername ?? '127.0.0.1',
         'db_port' => 3306,
         'db_name' => $dbname ?? '',
         'db_user' => $username ?? '',
         'db_password' => $password ?? '',
-        'admin_key' => $appConfig['admin_key'] ?? '',
     ];
 }
 
@@ -171,16 +161,6 @@ function seed_instruments(PDO $pdo): void
             $values['attack'], $values['decay'], $values['sustain'], $values['release'],
             $values['brightness'], $values['resonance'], $values['harmonics'], $values['volume'], $values['reverb'],
         ]);
-    }
-}
-
-function require_admin(): void
-{
-    $config = config();
-    $provided = $_SERVER['HTTP_X_ADMIN_KEY'] ?? '';
-    $expected = (string)($config['admin_key'] ?? '');
-    if ($expected === '' || !hash_equals($expected, $provided)) {
-        respond(['error' => '管理密钥不正确'], 401);
     }
 }
 
