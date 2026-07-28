@@ -51,6 +51,10 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /Piano Practice/);
   assert.match(page, /excludedFromExport/);
   assert.match(page, /36–96/);
+  assert.match(page, /selectedTracks = project\.tracks\.filter\(\(track\) => track\.solo\)/);
+  assert.match(page, /请先点亮至少一条轨道的 S/);
+  assert.match(page, /另存 S 轨/);
+  assert.match(page, /选择导出/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);

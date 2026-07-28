@@ -887,6 +887,11 @@ export default function Home() {
 
   function exportMidi() {
     if (!project) return;
+    const selectedTracks = project.tracks.filter((track) => track.solo);
+    if (!selectedTracks.length) {
+      notify({ text: "请先点亮至少一条轨道的 S，再另存 MIDI" });
+      return;
+    }
     const exportCopy = project.midi.clone();
     exportCopy.name = utf8ByteString(repairMidiText(project.midi.name));
     project.tracks.forEach((track) => {
@@ -896,7 +901,7 @@ export default function Home() {
       }
     });
     project.tracks
-      .filter((track) => track.excludedFromExport)
+      .filter((track) => !track.solo)
       .map((track) => project.midi.tracks.indexOf(track.source))
       .filter((index) => index >= 0)
       .sort((a, b) => b - a)
@@ -910,13 +915,13 @@ export default function Home() {
     const anchor = document.createElement("a");
     const base = project.name.replace(/\.midi?$/i, "") || "harmonic";
     anchor.href = url;
-    const suffix = project.tracks.some((track) => track.practiceGenerated) ? "piano-practice" : "edited";
+    const suffix = selectedTracks.some((track) => track.practiceGenerated) ? "piano-practice" : "selected-tracks";
     anchor.download = `${base}-${suffix}.mid`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify({ text: `已另存为 ${base}-${suffix}.mid` });
+    notify({ text: `已另存 ${selectedTracks.length} 条 S 轨：${base}-${suffix}.mid` });
   }
 
   const progress = duration ? Math.min(100, (position / duration) * 100) : 0;
@@ -937,7 +942,7 @@ export default function Home() {
         </div>
         <div className="header-actions">
           <a className="manage-link" href="./timbres/">音色管理</a>
-          {project && <button className="save-button" onClick={exportMidi}>↓ 另存为 MIDI</button>}
+          {project && <button className="save-button" onClick={exportMidi}>↓ 另存 S 轨</button>}
           <button className="import-small" onClick={() => inputRef.current?.click()}><span>＋</span> 导入 MIDI</button>
         </div>
       </header>
@@ -1073,7 +1078,7 @@ export default function Home() {
 
           <div className="track-heading">
             <span>音轨</span>
-            <span>{audibleTracks(project.tracks).length} / {project.tracks.length} 正在发声</span>
+            <span>S 已选 {project.tracks.filter((track) => track.solo).length} 条 · {audibleTracks(project.tracks).length} / {project.tracks.length} 正在发声</span>
           </div>
 
           <div className="track-list" ref={trackListRef}>
@@ -1123,7 +1128,7 @@ export default function Home() {
                   </div>
                   <div className="track-controls">
                     <button className={track.muted ? "active mute" : ""} aria-label={`${track.displayName} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>
-                    <button className={track.solo ? "active solo" : ""} aria-label={`${track.displayName} 独奏`} aria-pressed={track.solo} onClick={() => toggleTrack(track.id, "solo")}>S</button>
+                    <button className={track.solo ? "active solo" : ""} aria-label={`${track.displayName} 独奏并选择导出`} aria-pressed={track.solo} title="Solo／选择导出" onClick={() => toggleTrack(track.id, "solo")}>S</button>
                     <button className="delete-track" aria-label={`删除 ${track.displayName}`} onClick={() => deleteTrack(track.id)}>×</button>
                   </div>
                 </article>
