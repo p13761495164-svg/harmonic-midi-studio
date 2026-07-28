@@ -55,6 +55,12 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /请先点亮至少一条轨道的 S/);
   assert.match(page, /另存 S 轨/);
   assert.match(page, /选择导出/);
+  assert.match(page, /timelineValueChanges/);
+  assert.match(page, /encodeMidiWithValidKeySignatures/);
+  assert.match(page, /parseMidi/);
+  assert.match(page, /keyIndex - 7/);
+  assert.match(page, /tempoChangeEvents/);
+  assert.match(page, /keyChangeEvents/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);

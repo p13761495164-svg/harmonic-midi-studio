@@ -1,6 +1,7 @@
 "use client";
 
 import { Midi, Track } from "@tonejs/midi";
+import { parseMidi, writeMidi } from "midi-file";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CloudInstrument,
@@ -102,6 +103,34 @@ const DEFAULT_PRACTICE_CATEGORIES: Record<PracticeCategory, boolean> = {
   drums: false,
   effects: false,
 };
+
+function timelineValueChanges<T extends { ticks: number }>(events: T[], valueOf: (event: T) => string, initialValue: string) {
+  const lastAtTick = new Map<number, T>();
+  [...events].sort((a, b) => a.ticks - b.ticks).forEach((event) => lastAtTick.set(event.ticks, event));
+  let previous = initialValue;
+  return [...lastAtTick.values()].sort((a, b) => a.ticks - b.ticks).filter((event) => {
+    const value = valueOf(event);
+    const changed = value !== previous;
+    previous = value;
+    return changed;
+  });
+}
+
+function encodeMidiWithValidKeySignatures(midi: Midi) {
+  const parsed = parseMidi(midi.toArray());
+  const signatures = [...midi.header.keySignatures].sort((a, b) => a.ticks - b.ticks);
+  let signatureIndex = 0;
+  parsed.tracks.forEach((track) => track.forEach((event) => {
+    if (event.type !== "keySignature") return;
+    const signature = signatures[signatureIndex];
+    signatureIndex += 1;
+    if (!signature) return;
+    const keyIndex = KEYS.indexOf(signature.key);
+    event.key = keyIndex >= 0 ? keyIndex - 7 : 0;
+    event.scale = signature.scale === "minor" ? 1 : 0;
+  }));
+  return Uint8Array.from(writeMidi(parsed));
+}
 
 function classifyTrackForPractice(track: Track): PracticeCategory {
   const name = `${track.name} ${track.instrument.name}`.toLowerCase();
@@ -654,6 +683,18 @@ export default function Home() {
     [project],
   );
   const favoriteTimbres = useMemo(() => cloudInstruments.filter((instrument) => instrument.favorite), [cloudInstruments]);
+  const tempoChangeEvents = useMemo(
+    () => project ? timelineValueChanges(project.midi.header.tempos, (event) => event.bpm.toFixed(4), "120.0000") : [],
+    [project],
+  );
+  const keyChangeEvents = useMemo(
+    () => project ? timelineValueChanges(
+      project.midi.header.keySignatures,
+      (event) => `${event.key}:${event.scale}`,
+      `${project.estimatedKey.key}:${project.estimatedKey.scale}`,
+    ) : [],
+    [project],
+  );
   const practiceCategoryCounts = useMemo(() => {
     const counts: Record<PracticeCategory, number> = { melody: 0, harmony: 0, bass: 0, pad: 0, drums: 0, effects: 0 };
     project?.tracks.filter((track) => !track.practiceGenerated).forEach((track) => {
@@ -907,7 +948,7 @@ export default function Home() {
       .sort((a, b) => b - a)
       .forEach((index) => exportCopy.tracks.splice(index, 1));
     exportCopy.header.update();
-    const bytes = exportCopy.toArray();
+    const bytes = encodeMidiWithValidKeySignatures(exportCopy);
     const exportBuffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(exportBuffer).set(bytes);
     const blob = new Blob([exportBuffer], { type: "audio/midi" });
@@ -983,7 +1024,7 @@ export default function Home() {
             <div>
               <p className="eyebrow">NOW LOADED</p>
               <h1>{project.name}</h1>
-              <p>{project.tracks.length} 条音轨 <i /> {formatTime(duration)} <i /> {project.midi.header.tempos.length} Tempo 事件 <i /> {project.midi.header.keySignatures.length || "估算"} Key</p>
+              <p>{project.tracks.length} 条音轨 <i /> {formatTime(duration)} <i /> {tempoChangeEvents.length} Tempo 变化 <i /> {keyChangeEvents.length || "估算"} Key</p>
             </div>
             <button className="replace-button" onClick={() => inputRef.current?.click()}>更换文件</button>
           </div>
@@ -999,11 +1040,11 @@ export default function Home() {
               style={laneGeometry.width > 0 ? { left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` } : undefined}
             >
               <div className="scrubber-fill" style={{ width: `${progress}%` }} />
-              {project.midi.header.tempos.filter((event) => event.ticks > 0).map((event, index) => (
-                <span className="event-marker tempo-marker" key={`tempo-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
+              {tempoChangeEvents.filter((event) => event.ticks > 0).map((event, index) => (
+                <span className="event-marker tempo-marker" title={`${Math.round(event.bpm)} BPM`} key={`tempo-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
               ))}
-              {project.midi.header.keySignatures.filter((event) => event.ticks > 0).map((event, index) => (
-                <span className="event-marker key-marker" key={`key-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
+              {keyChangeEvents.filter((event) => event.ticks > 0).map((event, index) => (
+                <span className="event-marker key-marker" title={`${event.key} ${event.scale}`} key={`key-${index}`} style={{ left: `${(project.midi.header.ticksToSeconds(event.ticks) / duration) * 100}%` }} />
               ))}
               <input aria-label="播放进度" type="range" min="0" max={duration} step="0.01" value={position} onChange={(event) => seek(Number(event.target.value))} />
             </div>

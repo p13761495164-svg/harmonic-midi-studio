@@ -11,13 +11,14 @@
     "build:github": "next build --webpack",
     "build:php": "HARMONIC_BASE_PATH=/apps/harmonic-midi next build --webpack && node scripts/build-php-package.mjs",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@tonejs/midi": "^2.0.28",
     "drizzle-orm": "0.45.2",
+    "midi-file": "^1.2.4",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"
