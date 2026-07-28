@@ -92,6 +92,33 @@ button { color: inherit; }
 .sustain-button strong { margin-bottom: 4px; font-size: 10px; }
 .sustain-button small { color: #776c72; font: 7px var(--font-mono); }
 
+.practice-builder { margin: -14px 0 28px; overflow: hidden; border: 1px solid #34303d; border-radius: 8px; background: linear-gradient(135deg, #18161d, #141319); }
+.practice-builder.open { border-color: #554a72; box-shadow: 0 12px 32px #0003; }
+.practice-toggle { width: 100%; min-height: 52px; display: grid; grid-template-columns: auto 1fr 20px; align-items: center; gap: 14px; padding: 0 16px; border: 0; background: transparent; color: #d8d2df; text-align: left; cursor: pointer; }
+.practice-toggle:hover { background: #1d1a24; }
+.practice-toggle span { display: flex; align-items: center; gap: 9px; font-size: 11px; font-weight: 700; }
+.practice-toggle span b { color: #b19af2; font-size: 18px; }
+.practice-toggle small { color: #746e7c; font: 8px var(--font-mono); }
+.practice-toggle i { color: #a78fe7; font-style: normal; font-size: 16px; text-align: right; }
+.practice-body { padding: 14px; border-top: 1px solid #312d38; background: #121116; }
+.practice-intro { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.practice-intro strong { color: #cfc8d5; font-size: 10px; }
+.practice-intro span { color: #716b78; font: 8px/1.5 var(--font-mono); text-align: right; }
+.practice-categories { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.practice-categories label { min-width: 0; display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; padding: 11px; border: 1px solid #34303b; border-radius: 6px; background: #1a181f; cursor: pointer; transition: border-color .15s, background .15s; }
+.practice-categories label:hover { border-color: #544b66; }
+.practice-categories label.selected { border-color: #69568e; background: #241f30; }
+.practice-categories input { width: 14px; height: 14px; accent-color: #9077d3; }
+.practice-categories span { min-width: 0; }
+.practice-categories strong, .practice-categories small { display: block; }
+.practice-categories strong { margin-bottom: 4px; color: #d8d2df; font-size: 10px; }
+.practice-categories small { overflow: hidden; color: #6c6673; font: 7px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.practice-categories b { color: #9386a2; font: 8px var(--font-mono); white-space: nowrap; }
+.practice-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2c2932; }
+.practice-actions span { color: #686270; font: 8px/1.6 var(--font-mono); }
+.practice-actions button { flex: 0 0 auto; min-height: 36px; padding: 0 18px; border: 1px solid #826cbb; border-radius: 5px; background: #594585; color: #f2edff; font-size: 9px; font-weight: 700; cursor: pointer; }
+.practice-actions button:hover { background: #69529b; }
+
 .track-heading { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 0 4px; color: #8b8592; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
 .track-heading span:last-child { color: #5e5964; font-family: var(--font-mono); letter-spacing: 0; }
 .track-list { position: relative; border: 1px solid #302d37; border-radius: 8px; overflow: hidden; background: #151419; box-shadow: 0 20px 45px #0004; }
@@ -256,6 +283,7 @@ footer kbd { padding: 2px 4px; border: 1px solid #423e48; border-radius: 2px; co
   .transport-card { min-height: 120px; padding-top: 12px; padding-bottom: 25px; }
   .tools-body { grid-template-columns: 1fr 1fr; }
   .sustain-button { grid-column: 1 / -1; }
+  .practice-categories { grid-template-columns: repeat(2, 1fr); }
   .track-row { grid-template-columns: 28px minmax(130px, 190px) 1fr 112px; gap: 9px; padding: 10px; }
   .track-controls button { width: 32px; height: 32px; }
   .timbre-manager-shell { padding: 18px; }
@@ -276,6 +304,13 @@ footer kbd { padding: 2px 4px; border: 1px solid #423e48; border-radius: 2px; co
   .transport-card { top: 8px; grid-template-columns: 25px 42px 42px 1fr 38px; gap: 7px; min-height: 120px; padding: 10px 10px 25px; }
   .tools-body { grid-template-columns: 1fr; }
   .sustain-button { grid-column: auto; }
+  .practice-builder { margin-top: -12px; }
+  .practice-toggle { grid-template-columns: 1fr 20px; }
+  .practice-toggle small { display: none; }
+  .practice-categories { grid-template-columns: 1fr; }
+  .practice-intro, .practice-actions { align-items: stretch; flex-direction: column; }
+  .practice-intro span { text-align: left; }
+  .practice-actions button { width: 100%; }
   .event-editor.key-editor { grid-template-columns: 68px 1fr 52px; }
   .track-row { grid-template-columns: 25px 1fr 106px; min-height: 84px; }
   .track-lane { grid-column: 2 / 4; width: 100%; height: 34px; order: 4; }

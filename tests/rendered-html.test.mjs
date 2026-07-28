@@ -44,6 +44,13 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /noteOff \+ preset\.release/);
   assert.match(page, /setTargetAtTime\(0\.0001/);
   assert.match(page, /compressor\.threshold\.value = -22/);
+  assert.match(page, /classifyTrackForPractice/);
+  assert.match(page, /fitToPianoRange/);
+  assert.match(page, /mergePracticeTracks/);
+  assert.match(page, /生成钢琴练习版/);
+  assert.match(page, /Piano Practice/);
+  assert.match(page, /excludedFromExport/);
+  assert.match(page, /36–96/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);
@@ -53,6 +60,8 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.scrubber \{ position: absolute/);
   assert.match(css, /\.main-play/);
   assert.match(css, /\.edit-tools/);
+  assert.match(css, /\.practice-builder/);
+  assert.match(css, /\.practice-categories/);
   assert.doesNotMatch(page, /splitRegion|mergeRegions/);
 });
 

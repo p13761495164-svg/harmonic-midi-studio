@@ -17,6 +17,10 @@ type UiTrack = {
   displayName: string;
   muted: boolean;
   solo: boolean;
+  excludedFromExport?: boolean;
+  practiceGenerated?: boolean;
+  practicePreviousMuted?: boolean;
+  practicePreviousSolo?: boolean;
 };
 
 type MidiProject = {
@@ -74,12 +78,60 @@ type Toast = {
   action?: { label: string; run: () => void };
 };
 
+type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effects";
+
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
 const GM_FAMILY_IDS = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass", "reed", "pipe", "synth lead", "synth pad", "synth effects", "ethnic", "percussive", "sound effects"];
+const PRACTICE_CATEGORIES: { id: PracticeCategory; label: string; detail: string }[] = [
+  { id: "melody", label: "旋律", detail: "主旋律、独奏、歌唱线" },
+  { id: "harmony", label: "和声", detail: "钢琴、吉他与和弦声部" },
+  { id: "bass", label: "低音", detail: "Bass 与低音声部" },
+  { id: "pad", label: "铺底", detail: "弦乐、Pad 与长音" },
+  { id: "drums", label: "鼓组", detail: "通道 10 的打击乐" },
+  { id: "effects", label: "音效", detail: "效果与特殊打击乐" },
+];
+const DEFAULT_PRACTICE_CATEGORIES: Record<PracticeCategory, boolean> = {
+  melody: true,
+  harmony: true,
+  bass: true,
+  pad: false,
+  drums: false,
+  effects: false,
+};
+
+function classifyTrackForPractice(track: Track): PracticeCategory {
+  const name = `${track.name} ${track.instrument.name}`.toLowerCase();
+  const program = track.instrument.number;
+  const family = track.instrument.percussion ? "percussion" : GM_FAMILY_IDS[Math.floor(program / 8)];
+  if (track.instrument.percussion || track.channel === 9 || /drum|kit|鼓|打击/.test(name)) return "drums";
+  if (family === "bass" || /(^|\W)bass|低音|贝斯/.test(name)) return "bass";
+  if (family === "synth effects" || family === "sound effects" || /\bfx\b|effect|效果|音效/.test(name)) return "effects";
+  if (family === "strings" || family === "ensemble" || family === "synth pad" || /pad|string|弦乐|铺底/.test(name)) return "pad";
+  if (/melody|lead|vocal|voice|solo|主旋律|旋律|人声|独奏/.test(name)) return "melody";
+  if (/chord|harmony|伴奏|和声|和弦/.test(name)) return "harmony";
+  const notes = [...track.notes].sort((a, b) => a.ticks - b.ticks);
+  if (!notes.length) return "effects";
+  const averagePitch = notes.reduce((sum, note) => sum + note.midi, 0) / notes.length;
+  let overlaps = 0;
+  let latestEnd = -1;
+  notes.forEach((note) => {
+    if (note.ticks < latestEnd) overlaps += 1;
+    latestEnd = Math.max(latestEnd, note.ticks + note.durationTicks);
+  });
+  return overlaps / notes.length < 0.14 && averagePitch >= 52 ? "melody" : "harmony";
+}
+
+function fitToPianoRange(midi: number) {
+  let pitch = midi;
+  while (pitch < 36) pitch += 12;
+  while (pitch > 96) pitch -= 12;
+  return pitch;
+}
+
 
 function textScore(text: string) {
   const cjk = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
@@ -308,6 +360,8 @@ export default function Home() {
   const [scaleDraft, setScaleDraft] = useState<"major" | "minor">("major");
   const [toast, setToast] = useState<Toast | null>(null);
   const [showTools, setShowTools] = useState(false);
+  const [showPracticeMerge, setShowPracticeMerge] = useState(false);
+  const [practiceCategories, setPracticeCategories] = useState(DEFAULT_PRACTICE_CATEGORIES);
   const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
   const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
   const [cloudInstruments, setCloudInstruments] = useState<CloudInstrument[]>([]);
@@ -600,6 +654,13 @@ export default function Home() {
     [project],
   );
   const favoriteTimbres = useMemo(() => cloudInstruments.filter((instrument) => instrument.favorite), [cloudInstruments]);
+  const practiceCategoryCounts = useMemo(() => {
+    const counts: Record<PracticeCategory, number> = { melody: 0, harmony: 0, bass: 0, pad: 0, drums: 0, effects: 0 };
+    project?.tracks.filter((track) => !track.practiceGenerated).forEach((track) => {
+      counts[classifyTrackForPractice(track.source)] += 1;
+    });
+    return counts;
+  }, [project]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -620,6 +681,8 @@ export default function Home() {
       setScaleDraft(firstKey.scale);
       setError("");
       setShowTools(false);
+      setShowPracticeMerge(false);
+      setPracticeCategories(DEFAULT_PRACTICE_CATEGORIES);
       setTimbrePickerTrackId(null);
       setTrackTimbreOverrides({});
     } catch (reason) {
@@ -711,10 +774,19 @@ export default function Home() {
     if (!project) return;
     const target = project.tracks.find((track) => track.id === id);
     if (!target) return;
+    const previousTracks = project.tracks;
     const midiIndex = project.midi.tracks.indexOf(target.source);
-    const uiIndex = project.tracks.indexOf(target);
     project.midi.tracks.splice(midiIndex, 1);
-    const nextTracks = project.tracks.filter((track) => track.id !== id);
+    const nextTracks = project.tracks
+      .filter((track) => track.id !== id)
+      .map((track) => target.practiceGenerated && track.excludedFromExport ? {
+        ...track,
+        muted: track.practicePreviousMuted ?? false,
+        solo: track.practicePreviousSolo ?? false,
+        excludedFromExport: undefined,
+        practicePreviousMuted: undefined,
+        practicePreviousSolo: undefined,
+      } : track);
     setProject({ ...project, tracks: nextTracks });
     stopVoices();
     notify({
@@ -723,9 +795,90 @@ export default function Home() {
         label: "撤销",
         run: () => {
           project.midi.tracks.splice(midiIndex, 0, target.source);
-          const restored = [...nextTracks];
-          restored.splice(uiIndex, 0, target);
-          setProject({ ...project, tracks: restored });
+          setProject({ ...project, tracks: previousTracks });
+          setToast(null);
+        },
+      },
+    });
+  }
+
+  function mergePracticeTracks() {
+    if (!project) return;
+    if (project.tracks.some((track) => track.practiceGenerated)) {
+      notify({ text: "已有 Piano Practice 轨，请先删除后再重新生成" });
+      return;
+    }
+    const selected = project.tracks.filter((track) => (
+      !track.practiceGenerated && practiceCategories[classifyTrackForPractice(track.source)]
+    ));
+    if (!selected.length) {
+      notify({ text: "所选分类中没有可合并的轨道" });
+      return;
+    }
+
+    pause();
+    const previousTracks = project.tracks;
+    const practiceTrack = project.midi.addTrack();
+    practiceTrack.name = "Piano Practice";
+    practiceTrack.channel = 0;
+    practiceTrack.instrument.number = 0;
+    const mergedNotes = new Map<string, { midi: number; ticks: number; durationTicks: number; velocity: number }>();
+    selected.forEach((track) => track.source.notes.forEach((note) => {
+      const midi = fitToPianoRange(note.midi);
+      const key = `${note.ticks}:${midi}`;
+      const existing = mergedNotes.get(key);
+      if (!existing) {
+        mergedNotes.set(key, {
+          midi,
+          ticks: note.ticks,
+          durationTicks: Math.max(1, note.durationTicks),
+          velocity: Math.min(1, Math.max(0.12, note.velocity)),
+        });
+      } else {
+        existing.durationTicks = Math.max(existing.durationTicks, note.durationTicks);
+        existing.velocity = Math.max(existing.velocity, note.velocity);
+      }
+    }));
+    [...mergedNotes.values()]
+      .sort((a, b) => a.ticks - b.ticks || a.midi - b.midi)
+      .forEach((note) => practiceTrack.addNote(note));
+    project.midi.header.update();
+
+    const chosenLabels = PRACTICE_CATEGORIES
+      .filter((category) => practiceCategories[category.id] && practiceCategoryCounts[category.id] > 0)
+      .map((category) => category.label);
+    const selectedIds = new Set(selected.map((track) => track.id));
+    const nextTracks = previousTracks.map((track) => (
+      selectedIds.has(track.id) ? {
+        ...track,
+        muted: true,
+        solo: false,
+        excludedFromExport: true,
+        practicePreviousMuted: track.muted,
+        practicePreviousSolo: track.solo,
+      } : track
+    ));
+    const practiceUiTrack: UiTrack = {
+      id: Math.max(0, ...previousTracks.map((track) => track.id)) + 1,
+      source: practiceTrack,
+      displayName: `Piano Practice · ${chosenLabels.join(" + ")}`,
+      muted: false,
+      solo: false,
+      practiceGenerated: true,
+    };
+    setProject({ ...project, tracks: [...nextTracks, practiceUiTrack] });
+    setPosition(0);
+    setShowPracticeMerge(false);
+    scheduledRef.current.clear();
+    notify({
+      text: `已将 ${selected.length} 轨合并为 Piano Practice（${mergedNotes.size} notes）`,
+      action: {
+        label: "撤销",
+        run: () => {
+          const midiIndex = project.midi.tracks.indexOf(practiceTrack);
+          if (midiIndex >= 0) project.midi.tracks.splice(midiIndex, 1);
+          project.midi.header.update();
+          setProject({ ...project, tracks: previousTracks });
           setToast(null);
         },
       },
@@ -742,6 +895,13 @@ export default function Home() {
         exportCopy.tracks[sourceIndex].name = utf8ByteString(track.displayName);
       }
     });
+    project.tracks
+      .filter((track) => track.excludedFromExport)
+      .map((track) => project.midi.tracks.indexOf(track.source))
+      .filter((index) => index >= 0)
+      .sort((a, b) => b - a)
+      .forEach((index) => exportCopy.tracks.splice(index, 1));
+    exportCopy.header.update();
     const bytes = exportCopy.toArray();
     const exportBuffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(exportBuffer).set(bytes);
@@ -750,12 +910,13 @@ export default function Home() {
     const anchor = document.createElement("a");
     const base = project.name.replace(/\.midi?$/i, "") || "harmonic";
     anchor.href = url;
-    anchor.download = `${base}-edited.mid`;
+    const suffix = project.tracks.some((track) => track.practiceGenerated) ? "piano-practice" : "edited";
+    anchor.download = `${base}-${suffix}.mid`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify({ text: `已另存为 ${base}-edited.mid` });
+    notify({ text: `已另存为 ${base}-${suffix}.mid` });
   }
 
   const progress = duration ? Math.min(100, (position / duration) * 100) : 0;
@@ -804,6 +965,8 @@ export default function Home() {
             setKeyDraft("C");
             setScaleDraft("minor");
             setError("");
+            setShowPracticeMerge(false);
+            setPracticeCategories(DEFAULT_PRACTICE_CATEGORIES);
             setTrackTimbreOverrides({});
           }}>或打开示例工程</button>
           <p className="privacy-note">支持 .mid / .midi · 文件只在浏览器本地读取</p>
@@ -875,6 +1038,39 @@ export default function Home() {
             )}
           </div>
 
+          <div className={`practice-builder ${showPracticeMerge ? "open" : ""}`}>
+            <button className="practice-toggle" onClick={() => setShowPracticeMerge((open) => !open)}>
+              <span><b>♬</b> 生成钢琴练习版</span>
+              <small>按声部分类合并为一条可导出的 Piano Track</small>
+              <i>{showPracticeMerge ? "−" : "＋"}</i>
+            </button>
+            {showPracticeMerge && (
+              <div className="practice-body">
+                <div className="practice-intro">
+                  <strong>选择要合并的分类</strong>
+                  <span>已合并的原轨会静音但仍保留供比较；另存 MIDI 时不会重复导出。</span>
+                </div>
+                <div className="practice-categories">
+                  {PRACTICE_CATEGORIES.map((category) => (
+                    <label className={practiceCategories[category.id] ? "selected" : ""} key={category.id}>
+                      <input
+                        type="checkbox"
+                        checked={practiceCategories[category.id]}
+                        onChange={() => setPracticeCategories((current) => ({ ...current, [category.id]: !current[category.id] }))}
+                      />
+                      <span><strong>{category.label}</strong><small>{category.detail}</small></span>
+                      <b>{practiceCategoryCounts[category.id]} 轨</b>
+                    </label>
+                  ))}
+                </div>
+                <div className="practice-actions">
+                  <span>自动去重，并将超出范围的音符移入 36–96 钢琴练习音域。</span>
+                  <button onClick={mergePracticeTracks}>生成 Piano Track</button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="track-heading">
             <span>音轨</span>
             <span>{audibleTracks(project.tracks).length} / {project.tracks.length} 正在发声</span>
@@ -907,7 +1103,7 @@ export default function Home() {
                     <button className="track-meta-open" onClick={() => { setTimbrePickerTrackId(track.id); setTimbrePickerFavoritesOnly(false); setTimbrePickerQuery(""); }} aria-label={`替换 ${instrumentLabel(track.source)} 音色`}>
                       <strong>{track.displayName}</strong>
                       <span>CH {track.source.channel + 1} · P{String(effectiveProgram + 1).padStart(3, "0")} · {overrideTimbre?.name ?? instrumentLabel(track.source)}{effectiveCustom ? ` → ${effectiveCustom.name}` : ""} · {track.source.notes.length} notes</span>
-                      <small>点击选择其它音色或收藏音色</small>
+                      <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : "点击选择其它音色或收藏音色"}</small>
                     </button>
                   </div>
                   <div className="track-lane">
