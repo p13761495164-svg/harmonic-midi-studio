@@ -80,19 +80,10 @@ type Toast = {
   action?: { label: string; run: () => void };
 };
 
-type SegmentNote = {
-  midi: number;
-  ticks: number;
-  durationTicks: number;
-  velocity: number;
-  noteOffVelocity: number;
-};
-
 type TrackSegment = {
   id: string;
   startTick: number;
   durationTicks: number;
-  notes: SegmentNote[];
 };
 
 type RulerMark = {
@@ -125,12 +116,8 @@ const DEFAULT_PRACTICE_CATEGORIES: Record<PracticeCategory, boolean> = {
   drums: false,
   effects: false,
 };
-let segmentSequence = 1;
-
 function segmentId(trackId: number) {
-  const id = `segment-${trackId}-${segmentSequence}`;
-  segmentSequence += 1;
-  return id;
+  return `segment-${trackId}-1`;
 }
 
 function initialSegments(source: Track, trackId: number): TrackSegment[] {
@@ -141,49 +128,7 @@ function initialSegments(source: Track, trackId: number): TrackSegment[] {
     id: segmentId(trackId),
     startTick,
     durationTicks: Math.max(1, endTick - startTick),
-    notes: source.notes.map((note) => ({
-      midi: note.midi,
-      ticks: note.ticks - startTick,
-      durationTicks: note.durationTicks,
-      velocity: note.velocity,
-      noteOffVelocity: note.noteOffVelocity,
-    })),
   }];
-}
-
-function rebuildTrackFromSegments(source: Track, segments: TrackSegment[]) {
-  source.notes = [];
-  [...segments]
-    .sort((a, b) => a.startTick - b.startTick)
-    .forEach((segment) => segment.notes.forEach((note) => source.addNote({
-      midi: note.midi,
-      ticks: segment.startTick + note.ticks,
-      durationTicks: note.durationTicks,
-      velocity: note.velocity,
-      noteOffVelocity: note.noteOffVelocity,
-    })));
-}
-
-function sliceSegment(segment: TrackSegment, fromTick: number, toTick: number, id = segment.id): TrackSegment {
-  const from = Math.max(0, Math.min(segment.durationTicks, fromTick));
-  const to = Math.max(from + 1, Math.min(segment.durationTicks, toTick));
-  const notes = segment.notes.flatMap((note) => {
-    const noteEnd = note.ticks + note.durationTicks;
-    if (noteEnd <= from || note.ticks >= to) return [];
-    const clippedStart = Math.max(from, note.ticks);
-    const clippedEnd = Math.min(to, noteEnd);
-    return [{
-      ...note,
-      ticks: clippedStart - from,
-      durationTicks: Math.max(1, clippedEnd - clippedStart),
-    }];
-  });
-  return {
-    id,
-    startTick: segment.startTick + from,
-    durationTicks: Math.max(1, to - from),
-    notes,
-  };
 }
 
 function activeTimeSignature(midi: Midi, ticks: number) {
@@ -515,8 +460,6 @@ export default function Home() {
   const [showTools, setShowTools] = useState(false);
   const [showPracticeMerge, setShowPracticeMerge] = useState(false);
   const [practiceCategories, setPracticeCategories] = useState(DEFAULT_PRACTICE_CATEGORIES);
-  const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
-  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [timelineViewStart, setTimelineViewStart] = useState(0);
   const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
@@ -538,7 +481,7 @@ export default function Home() {
   const voicesRef = useRef(new Set<ActiveVoice>());
   const projectRef = useRef(project);
   const toastTimerRef = useRef<number | null>(null);
-  const zoomAnchorRatioRef = useRef(0.5);
+  const timelineScrollbarRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
 
@@ -810,6 +753,14 @@ export default function Home() {
   }, [duration, isPlaying, maxViewStart, position, timelineZoom, viewEnd, viewStart, visibleDuration]);
 
   useEffect(() => {
+    const scrollbar = timelineScrollbarRef.current;
+    if (!scrollbar) return;
+    const maxScrollLeft = Math.max(0, scrollbar.scrollWidth - scrollbar.clientWidth);
+    const nextScrollLeft = maxViewStart > 0 ? (viewStart / maxViewStart) * maxScrollLeft : 0;
+    if (Math.abs(scrollbar.scrollLeft - nextScrollLeft) > 1) scrollbar.scrollLeft = nextScrollLeft;
+  }, [maxViewStart, timelineZoom, viewStart]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code !== "Space" || event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
       event.preventDefault();
@@ -870,8 +821,6 @@ export default function Home() {
       setShowTools(false);
       setShowPracticeMerge(false);
       setPracticeCategories(DEFAULT_PRACTICE_CATEGORIES);
-      setEditingTrackId(null);
-      setSelectedSegmentId(null);
       setTimelineZoom(1);
       setTimelineViewStart(0);
       setTimbrePickerTrackId(null);
@@ -915,25 +864,25 @@ export default function Home() {
     }, 0);
   }
 
-  function rememberZoomAnchor(clientX: number, element: HTMLElement) {
-    const rect = element.getBoundingClientRect();
-    zoomAnchorRatioRef.current = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
-  }
-
-  function changeTimelineZoom(nextZoom: number) {
-    const zoom = Math.max(1, Math.min(12, nextZoom));
-    const nextVisibleDuration = duration / zoom;
-    const anchorRatio = zoomAnchorRatioRef.current;
+  function handleRegionPinch(event: ReactWheelEvent<HTMLElement>) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const lane = event.currentTarget.closest<HTMLElement>(".track-lane");
+    if (!lane) return;
+    const rect = lane.getBoundingClientRect();
+    const anchorRatio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
     const anchorTime = viewStart + visibleDuration * anchorRatio;
+    const zoom = Math.max(1, Math.min(12, timelineZoom * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+    const nextVisibleDuration = duration / zoom;
     setTimelineZoom(zoom);
     setTimelineViewStart(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)));
   }
 
-  function handleTimelineWheel(event: ReactWheelEvent<HTMLElement>) {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    rememberZoomAnchor(event.clientX, event.currentTarget);
-    changeTimelineZoom(timelineZoom * (event.deltaY < 0 ? 1.28 : 1 / 1.28));
+  function handleTimelineScrollbar() {
+    const scrollbar = timelineScrollbarRef.current;
+    if (!scrollbar) return;
+    const maxScrollLeft = Math.max(0, scrollbar.scrollWidth - scrollbar.clientWidth);
+    setTimelineViewStart(maxScrollLeft > 0 ? (scrollbar.scrollLeft / maxScrollLeft) * maxViewStart : 0);
   }
 
   function addTempoEvent() {
@@ -1012,82 +961,6 @@ export default function Home() {
         },
       },
     });
-  }
-
-  function openSegmentEditor(track: UiTrack, segmentIdToSelect?: string) {
-    const playheadSegment = track.segments.find((segment) => (
-      positionTicks >= segment.startTick && positionTicks < segment.startTick + segment.durationTicks
-    ));
-    setEditingTrackId(track.id);
-    setSelectedSegmentId(segmentIdToSelect ?? playheadSegment?.id ?? track.segments[0]?.id ?? null);
-  }
-
-  function commitSegmentEdit(trackId: number, nextSegments: TrackSegment[], message: string, nextSelectedId: string | null) {
-    if (!project) return;
-    const target = project.tracks.find((track) => track.id === trackId);
-    if (!target) return;
-    const previousSegments = target.segments;
-    pause();
-    rebuildTrackFromSegments(target.source, nextSegments);
-    project.midi.header.update();
-    setProject({
-      ...project,
-      tracks: project.tracks.map((track) => track.id === trackId ? { ...track, segments: nextSegments } : track),
-    });
-    setSelectedSegmentId(nextSelectedId);
-    scheduledRef.current.clear();
-    notify({
-      text: message,
-      action: {
-        label: "撤销",
-        run: () => {
-          rebuildTrackFromSegments(target.source, previousSegments);
-          project.midi.header.update();
-          setProject({
-            ...project,
-            tracks: project.tracks.map((track) => track.id === trackId ? { ...track, segments: previousSegments } : track),
-          });
-          setSelectedSegmentId(previousSegments[0]?.id ?? null);
-          setToast(null);
-        },
-      },
-    });
-  }
-
-  function splitSelectedSegment(track: UiTrack) {
-    const selected = track.segments.find((segment) => segment.id === selectedSegmentId);
-    if (!selected || !project) return;
-    const grid = Math.max(1, project.midi.header.ppq / 4);
-    const cutTick = Math.round(positionTicks / grid) * grid;
-    const localCut = cutTick - selected.startTick;
-    if (localCut <= 0 || localCut >= selected.durationTicks) {
-      notify({ text: "请先把播放线放在所选片段内部" });
-      return;
-    }
-    const left = sliceSegment(selected, 0, localCut);
-    const right = sliceSegment(selected, localCut, selected.durationTicks, segmentId(track.id));
-    const next = track.segments.flatMap((segment) => segment.id === selected.id ? [left, right] : [segment]);
-    commitSegmentEdit(track.id, next, `已在第 ${Math.round(cutTick / grid) + 1} 格分割片段`, right.id);
-  }
-
-  function deleteSelectedSegment(track: UiTrack) {
-    const selected = track.segments.find((segment) => segment.id === selectedSegmentId);
-    if (!selected) return;
-    const next = track.segments.filter((segment) => segment.id !== selected.id);
-    commitSegmentEdit(track.id, next, "已删除所选片段", next[0]?.id ?? null);
-  }
-
-  function moveSelectedSegment(track: UiTrack, nextStartTick: number) {
-    const selected = track.segments.find((segment) => segment.id === selectedSegmentId);
-    if (!selected || !project) return;
-    const grid = Math.max(1, project.midi.header.ppq / 4);
-    const quantized = Math.max(0, Math.round(nextStartTick / grid) * grid);
-    if (quantized === selected.startTick) return;
-    const moved = { ...selected, startTick: quantized };
-    const next = track.segments
-      .map((segment) => segment.id === selected.id ? moved : segment)
-      .sort((a, b) => a.startTick - b.startTick);
-    commitSegmentEdit(track.id, next, `片段已移动到第 ${Math.round(quantized / grid) + 1} 格`, moved.id);
   }
 
   function mergePracticeTracks() {
@@ -1262,8 +1135,6 @@ export default function Home() {
             setError("");
             setShowPracticeMerge(false);
             setPracticeCategories(DEFAULT_PRACTICE_CATEGORIES);
-            setEditingTrackId(null);
-            setSelectedSegmentId(null);
             setTimelineZoom(1);
             setTimelineViewStart(0);
             setTrackTimbreOverrides({});
@@ -1377,25 +1248,6 @@ export default function Home() {
             )}
           </div>
 
-          <div className="timeline-zoom">
-            <span>光标中心缩放</span>
-            <button aria-label="Zoom Out" onClick={() => changeTimelineZoom(timelineZoom / 1.5)}>Zoom Out</button>
-            <strong>{Math.round(timelineZoom * 100)}%</strong>
-            <button aria-label="Zoom In" onClick={() => changeTimelineZoom(timelineZoom * 1.5)}>Zoom In</button>
-            <input
-              aria-label="横向查看位置"
-              type="range"
-              min="0"
-              max={Math.max(0.001, maxViewStart)}
-              step="0.01"
-              value={viewStart}
-              disabled={timelineZoom <= 1}
-              onChange={(event) => setTimelineViewStart(Number(event.target.value))}
-            />
-            <small>{formatTime(viewStart)} – {formatTime(Math.min(duration, viewEnd))}</small>
-            <em>鼠标指向时间轴后缩放 · Ctrl/⌘ + 滚轮</em>
-          </div>
-
           <div className="track-heading">
             <span>音轨</span>
             <span>S 已选 {project.tracks.filter((track) => track.solo).length} 条 · {audibleTracks(project.tracks).length} / {project.tracks.length} 正在发声</span>
@@ -1407,8 +1259,6 @@ export default function Home() {
                 <div
                   className="timeline-ruler"
                   style={{ left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` }}
-                  onMouseMove={(event) => rememberZoomAnchor(event.clientX, event.currentTarget)}
-                  onWheel={handleTimelineWheel}
                   onClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     seek(Math.max(viewStart, Math.min(viewEnd, viewStart + ((event.clientX - rect.left) / rect.width) * visibleDuration)));
@@ -1428,8 +1278,20 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <span className="ruler-meter-label">拍号 {activeMeter[0]}/{activeMeter[1]} · 16分格</span>
+              <span className="ruler-meter-label">拍号 {activeMeter[0]}/{activeMeter[1]} · 16分格 · Region 上捏合伸缩</span>
             </div>
+            {laneGeometry.width > 0 && timelineZoom > 1 && (
+              <div className="timeline-scrollbar-shell">
+                <div
+                  className="timeline-scrollbar"
+                  ref={timelineScrollbarRef}
+                  onScroll={handleTimelineScrollbar}
+                  style={{ left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` }}
+                >
+                  <div style={{ width: `${timelineZoom * 100}%` }} />
+                </div>
+              </div>
+            )}
             {laneGeometry.width > 0 && position >= viewStart && position <= viewEnd && (
               <span
                 className="global-playhead"
@@ -1449,35 +1311,28 @@ export default function Home() {
               const effectiveMapping = programMappings.find((mapping) => mapping.program === effectiveProgram);
               const effectiveCustom = customTimbres.find((item) => item.id === effectiveMapping?.customTimbreId);
               const timbreColor = colorForTimbre(effectiveProgram, overrideProgram === undefined && track.source.instrument.percussion);
-              const selectedSegment = track.segments.find((segment) => segment.id === selectedSegmentId);
-              const sixteenthTicks = Math.max(1, project.midi.header.ppq / 4);
-              const beatTicks = Math.max(1, project.midi.header.ppq * 4 / activeTimeSignature(project.midi, selectedSegment?.startTick ?? 0)[1]);
               return (
-                <div className={`track-unit ${editingTrackId === track.id ? "editing" : ""}`} key={track.id}>
+                <div className="track-unit" key={track.id}>
                   <article className={`track-row ${audible ? "" : "inaudible"}`}>
                     <div className="track-index" style={{ color: timbreColor }}>{String(index + 1).padStart(2, "0")}</div>
                     <div className="track-meta">
                       <button className="track-meta-open" onClick={() => { setTimbrePickerTrackId(track.id); setTimbrePickerFavoritesOnly(false); setTimbrePickerQuery(""); }} aria-label={`替换 ${instrumentLabel(track.source)} 音色`}>
                         <strong>{track.displayName}</strong>
                         <span>CH {track.source.channel + 1} · P{String(effectiveProgram + 1).padStart(3, "0")} · {overrideTimbre?.name ?? instrumentLabel(track.source)}{effectiveCustom ? ` → ${effectiveCustom.name}` : ""} · {track.source.notes.length} notes</span>
-                        <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : `${track.segments.length} 个片段 · 点击剪刀编辑`}</small>
+                        <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : "鼠标放在 Region 上，用触控板捏合伸缩"}</small>
                       </button>
                     </div>
-                    <div
-                      className="track-lane"
-                      onMouseMove={(event) => rememberZoomAnchor(event.clientX, event.currentTarget)}
-                      onWheel={handleTimelineWheel}
-                    >
+                    <div className="track-lane">
                       <div className="track-progress" style={{ width: `${progress}%`, background: timbreColor }} />
-                      {track.segments.map((segment, segmentIndex) => {
+                      {track.segments.map((segment) => {
                         const startSeconds = project.midi.header.ticksToSeconds(segment.startTick);
                         const endSeconds = project.midi.header.ticksToSeconds(segment.startTick + segment.durationTicks);
                         return (
-                          <button
-                            className={`track-segment ${selectedSegmentId === segment.id && editingTrackId === track.id ? "selected" : ""}`}
-                            aria-label={`编辑片段 ${segmentIndex + 1}`}
+                          <span
+                            className="track-segment"
                             key={segment.id}
-                            onClick={() => openSegmentEditor(track, segment.id)}
+                            title="在这里用 Mac 触控板捏合，可伸缩时间轴"
+                            onWheel={handleRegionPinch}
                             style={{
                               left: `${timelinePercent(startSeconds)}%`,
                               width: `${Math.max(0.25, ((endSeconds - startSeconds) / visibleDuration) * 100)}%`,
@@ -1503,49 +1358,9 @@ export default function Home() {
                     <div className="track-controls">
                       <button className={track.muted ? "active mute" : ""} aria-label={`${track.displayName} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>
                       <button className={track.solo ? "active solo" : ""} aria-label={`${track.displayName} 独奏并选择导出`} aria-pressed={track.solo} title="Solo／选择导出" onClick={() => toggleTrack(track.id, "solo")}>S</button>
-                      <button className={`edit-track ${editingTrackId === track.id ? "active" : ""}`} aria-label={`编辑 ${track.displayName} 片段`} title="编辑片段" onClick={() => editingTrackId === track.id ? setEditingTrackId(null) : openSegmentEditor(track)}>✂</button>
                       <button className="delete-track" aria-label={`删除 ${track.displayName}`} onClick={() => deleteTrack(track.id)}>×</button>
                     </div>
                   </article>
-                  {editingTrackId === track.id && (
-                    <div className="segment-editor">
-                      <div className="segment-editor-title">
-                        <span>REGION EDITOR</span>
-                        <strong>{selectedSegment ? `片段 ${track.segments.indexOf(selectedSegment) + 1} / ${track.segments.length}` : "当前轨道没有片段"}</strong>
-                        <small>播放线：第 {Math.round(positionTicks / sixteenthTicks) + 1} 个 16分格</small>
-                      </div>
-                      {selectedSegment && (
-                        <>
-                          <div className="segment-select">
-                            {track.segments.map((segment, segmentIndex) => (
-                              <button className={segment.id === selectedSegment.id ? "active" : ""} key={segment.id} onClick={() => setSelectedSegmentId(segment.id)}>
-                                {segmentIndex + 1}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="segment-position">
-                            <label>
-                              <span>开始位置（16分格）</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={Math.round(selectedSegment.startTick / sixteenthTicks) + 1}
-                                onChange={(event) => moveSelectedSegment(track, (Math.max(1, Number(event.target.value)) - 1) * sixteenthTicks)}
-                              />
-                            </label>
-                            <button onClick={() => moveSelectedSegment(track, selectedSegment.startTick - beatTicks)}>−1 拍</button>
-                            <button onClick={() => moveSelectedSegment(track, selectedSegment.startTick - sixteenthTicks)}>−1 格</button>
-                            <button onClick={() => moveSelectedSegment(track, selectedSegment.startTick + sixteenthTicks)}>+1 格</button>
-                            <button onClick={() => moveSelectedSegment(track, selectedSegment.startTick + beatTicks)}>+1 拍</button>
-                          </div>
-                          <div className="segment-actions">
-                            <button onClick={() => splitSelectedSegment(track)}>✂ 播放线分割</button>
-                            <button className="danger" onClick={() => deleteSelectedSegment(track)}>删除片段</button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
                 </div>
               );
             })}
