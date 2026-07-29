@@ -119,14 +119,15 @@ button { color: inherit; }
 .practice-actions button { flex: 0 0 auto; min-height: 36px; padding: 0 18px; border: 1px solid #826cbb; border-radius: 5px; background: #594585; color: #f2edff; font-size: 9px; font-weight: 700; cursor: pointer; }
 .practice-actions button:hover { background: #69529b; }
 
-.timeline-zoom { min-height: 44px; display: grid; grid-template-columns: auto 28px 52px 28px minmax(120px, 1fr) auto; align-items: center; gap: 8px; margin: -14px 0 18px; padding: 7px 12px; border: 1px solid #312d39; border-radius: 7px; background: #151419; }
+.timeline-zoom { min-height: 44px; display: grid; grid-template-columns: auto 76px 52px 68px minmax(120px, 1fr) auto auto; align-items: center; gap: 8px; margin: -14px 0 18px; padding: 7px 12px; border: 1px solid #312d39; border-radius: 7px; background: #151419; }
 .timeline-zoom > span { color: #85808d; font-size: 9px; }
-.timeline-zoom button { width: 28px; height: 28px; border: 1px solid #494252; border-radius: 4px; background: #24202b; color: #c7bed4; cursor: pointer; }
+.timeline-zoom button { height: 28px; padding: 0 9px; border: 1px solid #494252; border-radius: 4px; background: #24202b; color: #c7bed4; font: 8px var(--font-mono); cursor: pointer; }
 .timeline-zoom button:hover { border-color: #806caa; color: white; }
 .timeline-zoom strong { color: #b5a7c8; font: 9px var(--font-mono); text-align: center; }
 .timeline-zoom input { width: 100%; accent-color: #9077d3; }
 .timeline-zoom input:disabled { opacity: .3; }
 .timeline-zoom small { color: #686170; font: 8px var(--font-mono); white-space: nowrap; }
+.timeline-zoom em { color: #595360; font: 7px var(--font-mono); font-style: normal; white-space: nowrap; }
 
 .track-heading { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 0 4px; color: #8b8592; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
 .track-heading span:last-child { color: #5e5964; font-family: var(--font-mono); letter-spacing: 0; }
@@ -350,8 +351,8 @@ footer kbd { padding: 2px 4px; border: 1px solid #423e48; border-radius: 2px; co
   .practice-intro, .practice-actions { align-items: stretch; flex-direction: column; }
   .practice-intro span { text-align: left; }
   .practice-actions button { width: 100%; }
-  .timeline-zoom { grid-template-columns: auto 28px 48px 28px; }
-  .timeline-zoom input, .timeline-zoom small { grid-column: 1 / -1; }
+  .timeline-zoom { grid-template-columns: 1fr 76px 50px 68px; }
+  .timeline-zoom input, .timeline-zoom small, .timeline-zoom em { grid-column: 1 / -1; }
   .event-editor.key-editor { grid-template-columns: 68px 1fr 52px; }
   .track-row { grid-template-columns: 25px 1fr 142px; min-height: 84px; }
   .track-lane { grid-column: 2 / 4; width: 100%; height: 34px; order: 4; }

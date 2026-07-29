@@ -2,7 +2,7 @@
 
 import { Midi, Track } from "@tonejs/midi";
 import { parseMidi, writeMidi } from "midi-file";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from "react";
 import {
   CloudInstrument,
   CustomTimbre,
@@ -538,6 +538,7 @@ export default function Home() {
   const voicesRef = useRef(new Set<ActiveVoice>());
   const projectRef = useRef(project);
   const toastTimerRef = useRef<number | null>(null);
+  const zoomAnchorRatioRef = useRef(0.5);
 
   useEffect(() => { projectRef.current = project; }, [project]);
 
@@ -914,11 +915,25 @@ export default function Home() {
     }, 0);
   }
 
+  function rememberZoomAnchor(clientX: number, element: HTMLElement) {
+    const rect = element.getBoundingClientRect();
+    zoomAnchorRatioRef.current = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+  }
+
   function changeTimelineZoom(nextZoom: number) {
     const zoom = Math.max(1, Math.min(12, nextZoom));
     const nextVisibleDuration = duration / zoom;
+    const anchorRatio = zoomAnchorRatioRef.current;
+    const anchorTime = viewStart + visibleDuration * anchorRatio;
     setTimelineZoom(zoom);
-    setTimelineViewStart(Math.max(0, Math.min(duration - nextVisibleDuration, position - nextVisibleDuration / 2)));
+    setTimelineViewStart(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)));
+  }
+
+  function handleTimelineWheel(event: ReactWheelEvent<HTMLElement>) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    rememberZoomAnchor(event.clientX, event.currentTarget);
+    changeTimelineZoom(timelineZoom * (event.deltaY < 0 ? 1.28 : 1 / 1.28));
   }
 
   function addTempoEvent() {
@@ -1053,23 +1068,6 @@ export default function Home() {
     const right = sliceSegment(selected, localCut, selected.durationTicks, segmentId(track.id));
     const next = track.segments.flatMap((segment) => segment.id === selected.id ? [left, right] : [segment]);
     commitSegmentEdit(track.id, next, `已在第 ${Math.round(cutTick / grid) + 1} 格分割片段`, right.id);
-  }
-
-  function trimSelectedSegment(track: UiTrack, side: "left" | "right") {
-    const selected = track.segments.find((segment) => segment.id === selectedSegmentId);
-    if (!selected || !project) return;
-    const grid = Math.max(1, project.midi.header.ppq / 4);
-    const cutTick = Math.round(positionTicks / grid) * grid;
-    const localCut = cutTick - selected.startTick;
-    if (localCut <= 0 || localCut >= selected.durationTicks) {
-      notify({ text: "播放线需要位于所选片段内部才能裁剪" });
-      return;
-    }
-    const trimmed = side === "left"
-      ? sliceSegment(selected, localCut, selected.durationTicks)
-      : sliceSegment(selected, 0, localCut);
-    const next = track.segments.map((segment) => segment.id === selected.id ? trimmed : segment);
-    commitSegmentEdit(track.id, next, side === "left" ? "已裁剪播放线左侧" : "已裁剪播放线右侧", trimmed.id);
   }
 
   function deleteSelectedSegment(track: UiTrack) {
@@ -1380,10 +1378,10 @@ export default function Home() {
           </div>
 
           <div className="timeline-zoom">
-            <span>横向缩放</span>
-            <button aria-label="缩小时间轴" onClick={() => changeTimelineZoom(timelineZoom / 1.5)}>−</button>
+            <span>光标中心缩放</span>
+            <button aria-label="Zoom Out" onClick={() => changeTimelineZoom(timelineZoom / 1.5)}>Zoom Out</button>
             <strong>{Math.round(timelineZoom * 100)}%</strong>
-            <button aria-label="放大时间轴" onClick={() => changeTimelineZoom(timelineZoom * 1.5)}>＋</button>
+            <button aria-label="Zoom In" onClick={() => changeTimelineZoom(timelineZoom * 1.5)}>Zoom In</button>
             <input
               aria-label="横向查看位置"
               type="range"
@@ -1395,6 +1393,7 @@ export default function Home() {
               onChange={(event) => setTimelineViewStart(Number(event.target.value))}
             />
             <small>{formatTime(viewStart)} – {formatTime(Math.min(duration, viewEnd))}</small>
+            <em>鼠标指向时间轴后缩放 · Ctrl/⌘ + 滚轮</em>
           </div>
 
           <div className="track-heading">
@@ -1408,6 +1407,8 @@ export default function Home() {
                 <div
                   className="timeline-ruler"
                   style={{ left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` }}
+                  onMouseMove={(event) => rememberZoomAnchor(event.clientX, event.currentTarget)}
+                  onWheel={handleTimelineWheel}
                   onClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     seek(Math.max(viewStart, Math.min(viewEnd, viewStart + ((event.clientX - rect.left) / rect.width) * visibleDuration)));
@@ -1462,7 +1463,11 @@ export default function Home() {
                         <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : `${track.segments.length} 个片段 · 点击剪刀编辑`}</small>
                       </button>
                     </div>
-                    <div className="track-lane">
+                    <div
+                      className="track-lane"
+                      onMouseMove={(event) => rememberZoomAnchor(event.clientX, event.currentTarget)}
+                      onWheel={handleTimelineWheel}
+                    >
                       <div className="track-progress" style={{ width: `${progress}%`, background: timbreColor }} />
                       {track.segments.map((segment, segmentIndex) => {
                         const startSeconds = project.midi.header.ticksToSeconds(segment.startTick);
@@ -1535,8 +1540,6 @@ export default function Home() {
                           </div>
                           <div className="segment-actions">
                             <button onClick={() => splitSelectedSegment(track)}>✂ 播放线分割</button>
-                            <button onClick={() => trimSelectedSegment(track, "left")}>裁剪左侧</button>
-                            <button onClick={() => trimSelectedSegment(track, "right")}>裁剪右侧</button>
                             <button className="danger" onClick={() => deleteSelectedSegment(track)}>删除片段</button>
                           </div>
                         </>
