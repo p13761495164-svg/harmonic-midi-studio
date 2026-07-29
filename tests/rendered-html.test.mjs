@@ -61,6 +61,20 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /keyIndex - 7/);
   assert.match(page, /tempoChangeEvents/);
   assert.match(page, /keyChangeEvents/);
+  assert.match(page, /activeTimeSignature/);
+  assert.match(page, /buildRulerMarks/);
+  assert.match(page, /timeSignatures/);
+  assert.match(page, /METER/);
+  assert.match(page, /16分格/);
+  assert.match(page, /timelineZoom/);
+  assert.match(page, /横向缩放/);
+  assert.match(page, /initialSegments/);
+  assert.match(page, /rebuildTrackFromSegments/);
+  assert.match(page, /splitSelectedSegment/);
+  assert.match(page, /trimSelectedSegment/);
+  assert.match(page, /deleteSelectedSegment/);
+  assert.match(page, /moveSelectedSegment/);
+  assert.match(page, /播放线分割/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);
@@ -72,6 +86,11 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.edit-tools/);
   assert.match(css, /\.practice-builder/);
   assert.match(css, /\.practice-categories/);
+  assert.match(css, /\.timeline-ruler/);
+  assert.match(css, /\.ruler-mark\.measure/);
+  assert.match(css, /\.timeline-zoom/);
+  assert.match(css, /\.track-segment/);
+  assert.match(css, /\.segment-editor/);
   assert.doesNotMatch(page, /splitRegion|mergeRegions/);
 });
 
