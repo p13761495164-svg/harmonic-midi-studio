@@ -147,9 +147,9 @@ button { color: inherit; }
 .track-meta strong { display: block; overflow: hidden; margin-bottom: 7px; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .track-meta span { display: block; overflow: hidden; color: #65616b; font: 8px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .track-meta small { display: block; margin-top: 5px; color: #514c58; font: 7px var(--font-mono); }
-.track-lane { position: relative; height: 55px; overflow: hidden; border-left: 1px solid #3d3944; border-right: 1px solid #3d3944; background-image: linear-gradient(to right, #2a2730 1px, transparent 1px), linear-gradient(to bottom, transparent 49%, #27242c 50%, transparent 51%); background-size: 12.5% 100%, 100% 100%; }
+.track-lane { position: relative; height: 55px; overflow: hidden; overscroll-behavior-x: contain; border-left: 1px solid #3d3944; border-right: 1px solid #3d3944; background-image: linear-gradient(to right, #2a2730 1px, transparent 1px), linear-gradient(to bottom, transparent 49%, #27242c 50%, transparent 51%); background-size: 12.5% 100%, 100% 100%; }
 .track-lane > i { position: absolute; z-index: 2; height: 3px; min-width: 2px; border-radius: 2px; transform: translateY(50%); pointer-events: none; }
-.track-segment { position: absolute; z-index: 1; top: 3px; bottom: 3px; min-width: 3px; border: 1px solid; border-radius: 4px; opacity: .11; cursor: ew-resize; touch-action: none; }
+.track-segment { position: absolute; z-index: 1; top: 3px; bottom: 3px; min-width: 3px; border: 1px solid; border-radius: 4px; opacity: .11; cursor: crosshair; }
 .track-segment:hover { opacity: .2; }
 .track-progress { position: absolute; left: 0; top: 0; bottom: 0; opacity: .055; }
 .global-playhead { position: absolute; z-index: 8; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); background: #f4e0a0; box-shadow: 0 0 7px #f4e0a0aa; pointer-events: none; }

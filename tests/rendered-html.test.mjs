@@ -68,10 +68,13 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /16分格/);
   assert.match(page, /timelineZoom/);
   assert.match(page, /initialSegments/);
-  assert.match(page, /handleRegionPinch/);
+  assert.match(page, /thinRulerMarks/);
+  assert.match(page, /addEventListener\("wheel", onWheel, \{ passive: false \}\)/);
+  assert.match(page, /horizontalDelta/);
+  assert.match(page, /event\.deltaX/);
   assert.match(page, /timelineScrollbarRef/);
   assert.match(page, /handleTimelineScrollbar/);
-  assert.match(page, /Region 上捏合伸缩/);
+  assert.match(page, /轨道区捏合伸缩/);
   assert.doesNotMatch(page, /Zoom In|Zoom Out|横向查看位置/);
   assert.doesNotMatch(page, /REGION EDITOR|播放线分割|裁剪左侧|裁剪右侧|删除片段|开始位置（16分格）/);
   assert.doesNotMatch(page, /splitSelectedSegment|trimSelectedSegment|deleteSelectedSegment|moveSelectedSegment|rebuildTrackFromSegments/);

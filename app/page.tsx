@@ -2,7 +2,7 @@
 
 import { Midi, Track } from "@tonejs/midi";
 import { parseMidi, writeMidi } from "midi-file";
-import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CloudInstrument,
   CustomTimbre,
@@ -167,6 +167,40 @@ function buildRulerMarks(midi: Midi): RulerMark[] {
     measure += 1;
   }
   return marks;
+}
+
+function thinRulerMarks(midi: Midi, marks: RulerMark[], viewStart: number, viewEnd: number, width: number) {
+  if (width <= 0 || viewEnd <= viewStart) return [];
+  const visible = marks.map((mark) => ({
+    ...mark,
+    x: ((midi.header.ticksToSeconds(mark.ticks) - viewStart) / (viewEnd - viewStart)) * width,
+  })).filter((mark) => mark.x >= 0 && mark.x <= width);
+  const kept: Array<RulerMark & { x: number }> = [];
+  let lastMeasureX = -Infinity;
+  let lastLabelX = -Infinity;
+  visible.filter((mark) => mark.kind === "measure").forEach((mark) => {
+    if (mark.x - lastMeasureX < 5) return;
+    kept.push({ ...mark, label: mark.x - lastLabelX >= 34 ? mark.label : undefined });
+    lastMeasureX = mark.x;
+    if (mark.label && mark.x - lastLabelX >= 34) lastLabelX = mark.x;
+  });
+  let lastBeatX = -Infinity;
+  visible.filter((mark) => mark.kind === "beat").forEach((mark) => {
+    const nearMeasure = kept.some((item) => item.kind === "measure" && Math.abs(item.x - mark.x) < 5);
+    if (!nearMeasure && mark.x - lastBeatX >= 7) {
+      kept.push(mark);
+      lastBeatX = mark.x;
+    }
+  });
+  let lastDivisionX = -Infinity;
+  visible.filter((mark) => mark.kind === "division").forEach((mark) => {
+    const nearStructural = kept.some((item) => item.kind !== "division" && Math.abs(item.x - mark.x) < 5);
+    if (!nearStructural && mark.x - lastDivisionX >= 9) {
+      kept.push(mark);
+      lastDivisionX = mark.x;
+    }
+  });
+  return kept.sort((a, b) => a.ticks - b.ticks);
 }
 
 function timelineValueChanges<T extends { ticks: number }>(events: T[], valueOf: (event: T) => string, initialValue: string) {
@@ -761,6 +795,37 @@ export default function Home() {
   }, [maxViewStart, timelineZoom, viewStart]);
 
   useEffect(() => {
+    const trackArea = trackListRef.current;
+    if (!trackArea || !duration) return;
+    const onWheel = (event: WheelEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const lane = target?.closest<HTMLElement>(".track-lane");
+      if (!lane || !trackArea.contains(lane)) return;
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = lane.getBoundingClientRect();
+        const anchorRatio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+        const anchorTime = viewStart + visibleDuration * anchorRatio;
+        const zoom = Math.max(1, Math.min(12, timelineZoom * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+        const nextVisibleDuration = duration / zoom;
+        setTimelineZoom(zoom);
+        setTimelineViewStart(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)));
+        return;
+      }
+      const horizontalDelta = Math.abs(event.deltaX) > 0.2 ? event.deltaX : event.shiftKey ? event.deltaY : 0;
+      const scrollbar = timelineScrollbarRef.current;
+      if (horizontalDelta && scrollbar && timelineZoom > 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        scrollbar.scrollLeft += horizontalDelta;
+      }
+    };
+    trackArea.addEventListener("wheel", onWheel, { passive: false });
+    return () => trackArea.removeEventListener("wheel", onWheel);
+  }, [duration, timelineZoom, viewStart, visibleDuration]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code !== "Space" || event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
       event.preventDefault();
@@ -775,6 +840,10 @@ export default function Home() {
   const positionTicks = project ? Math.max(0, Math.round(project.midi.header.secondsToTicks(position))) : 0;
   const activeMeter = project ? activeTimeSignature(project.midi, positionTicks) : [4, 4];
   const rulerMarks = useMemo(() => project ? buildRulerMarks(project.midi) : [], [project]);
+  const displayedRulerMarks = useMemo(
+    () => project ? thinRulerMarks(project.midi, rulerMarks, viewStart, viewEnd, laneGeometry.width) : [],
+    [laneGeometry.width, project, rulerMarks, viewEnd, viewStart],
+  );
   const sustainCount = useMemo(
     () => project?.tracks.reduce((sum, track) => sum + (track.source.controlChanges[64]?.length ?? 0), 0) ?? 0,
     [project],
@@ -862,20 +931,6 @@ export default function Home() {
       scheduledRef.current.clear();
       setIsPlaying(true);
     }, 0);
-  }
-
-  function handleRegionPinch(event: ReactWheelEvent<HTMLElement>) {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    const lane = event.currentTarget.closest<HTMLElement>(".track-lane");
-    if (!lane) return;
-    const rect = lane.getBoundingClientRect();
-    const anchorRatio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
-    const anchorTime = viewStart + visibleDuration * anchorRatio;
-    const zoom = Math.max(1, Math.min(12, timelineZoom * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
-    const nextVisibleDuration = duration / zoom;
-    setTimelineZoom(zoom);
-    setTimelineViewStart(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)));
   }
 
   function handleTimelineScrollbar() {
@@ -1264,10 +1319,7 @@ export default function Home() {
                     seek(Math.max(viewStart, Math.min(viewEnd, viewStart + ((event.clientX - rect.left) / rect.width) * visibleDuration)));
                   }}
                 >
-                  {rulerMarks.filter((mark) => {
-                    const seconds = project.midi.header.ticksToSeconds(mark.ticks);
-                    return seconds >= viewStart && seconds <= viewEnd;
-                  }).map((mark, index) => (
+                  {displayedRulerMarks.map((mark, index) => (
                     <span
                       className={`ruler-mark ${mark.kind}`}
                       key={`${mark.ticks}-${index}`}
@@ -1278,7 +1330,7 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <span className="ruler-meter-label">拍号 {activeMeter[0]}/{activeMeter[1]} · 16分格 · Region 上捏合伸缩</span>
+              <span className="ruler-meter-label">拍号 {activeMeter[0]}/{activeMeter[1]} · 16分格自动疏密 · 轨道区捏合 / 双指左右滚动</span>
             </div>
             {laneGeometry.width > 0 && timelineZoom > 1 && (
               <div className="timeline-scrollbar-shell">
@@ -1319,7 +1371,7 @@ export default function Home() {
                       <button className="track-meta-open" onClick={() => { setTimbrePickerTrackId(track.id); setTimbrePickerFavoritesOnly(false); setTimbrePickerQuery(""); }} aria-label={`替换 ${instrumentLabel(track.source)} 音色`}>
                         <strong>{track.displayName}</strong>
                         <span>CH {track.source.channel + 1} · P{String(effectiveProgram + 1).padStart(3, "0")} · {overrideTimbre?.name ?? instrumentLabel(track.source)}{effectiveCustom ? ` → ${effectiveCustom.name}` : ""} · {track.source.notes.length} notes</span>
-                        <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : "鼠标放在 Region 上，用触控板捏合伸缩"}</small>
+                        <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : "在轨道区捏合伸缩，双指左右滚动"}</small>
                       </button>
                     </div>
                     <div className="track-lane">
@@ -1331,8 +1383,7 @@ export default function Home() {
                           <span
                             className="track-segment"
                             key={segment.id}
-                            title="在这里用 Mac 触控板捏合，可伸缩时间轴"
-                            onWheel={handleRegionPinch}
+                            title="在轨道区使用 Mac 触控板捏合伸缩"
                             style={{
                               left: `${timelinePercent(startSeconds)}%`,
                               width: `${Math.max(0.25, ((endSeconds - startSeconds) / visibleDuration) * 100)}%`,
