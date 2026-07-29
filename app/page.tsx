@@ -1200,45 +1200,19 @@ export default function Home() {
       ) : (
         <section className="player">
           <div className="project-summary">
-            <div>
+            <div className="project-title-block">
               <p className="eyebrow">NOW LOADED</p>
               <h1>{project.name}</h1>
-              <p>{project.tracks.length} 条音轨 <i /> {formatTime(duration)} <i /> 拍号 {activeMeter[0]}/{activeMeter[1]} <i /> {tempoChangeEvents.length} Tempo 变化 <i /> {keyChangeEvents.length || "估算"} Key</p>
+              <div className="project-live-status">
+                <span className={isPlaying ? "playing" : ""}>{isPlaying ? "播放中" : "已暂停"}</span>
+                <strong>{formatTime(position)} / {formatTime(duration)}</strong>
+                <span>{Math.round(activeTempo)} BPM</span>
+                <span>{formatKey(activeKey)}</span>
+                <span>{activeMeter[0]}/{activeMeter[1]}</span>
+                <small>{project.tracks.length} 轨 · SPACE 播放 / 暂停</small>
+              </div>
             </div>
             <button className="replace-button" onClick={() => inputRef.current?.click()}>更换文件</button>
-          </div>
-
-          <div className="transport-card">
-            <button className="jump-button" aria-label="回到开头" onClick={() => seek(0)}>│◀</button>
-            <button className={`main-play ${isPlaying ? "playing" : ""}`} aria-label={isPlaying ? "暂停" : "播放"} onClick={isPlaying ? pause : play}>
-              {isPlaying ? "Ⅱ" : "▶"}
-            </button>
-            <div className="time-current">{formatTime(position)}</div>
-            <div
-              className="scrubber"
-              style={laneGeometry.width > 0 ? { left: `${laneGeometry.left}px`, width: `${laneGeometry.width}px` } : undefined}
-            >
-              <div className="scrubber-fill" style={{ width: `${progress}%` }} />
-              {tempoChangeEvents.filter((event) => {
-                const seconds = project.midi.header.ticksToSeconds(event.ticks);
-                return event.ticks > 0 && seconds >= viewStart && seconds <= viewEnd;
-              }).map((event, index) => (
-                <span className="event-marker tempo-marker" title={`${Math.round(event.bpm)} BPM`} key={`tempo-${index}`} style={{ left: `${timelinePercent(project.midi.header.ticksToSeconds(event.ticks))}%` }} />
-              ))}
-              {keyChangeEvents.filter((event) => {
-                const seconds = project.midi.header.ticksToSeconds(event.ticks);
-                return event.ticks > 0 && seconds >= viewStart && seconds <= viewEnd;
-              }).map((event, index) => (
-                <span className="event-marker key-marker" title={`${event.key} ${event.scale}`} key={`key-${index}`} style={{ left: `${timelinePercent(project.midi.header.ticksToSeconds(event.ticks))}%` }} />
-              ))}
-              <input aria-label="播放进度" type="range" min={viewStart} max={viewEnd} step="0.01" value={Math.max(viewStart, Math.min(viewEnd, position))} onChange={(event) => seek(Number(event.target.value))} />
-            </div>
-            <div className="time-total">{formatTime(duration)}</div>
-            <div className="live-readouts">
-              <div><span>TEMPO</span><strong>{Math.round(activeTempo)} <small>BPM</small></strong></div>
-              <div><span>KEY {activeKey.estimated ? "· EST." : ""}</span><strong>{formatKey(activeKey)}</strong></div>
-              <div><span>METER</span><strong>{activeMeter[0]}/{activeMeter[1]}</strong></div>
-            </div>
           </div>
 
           <div className={`edit-tools ${showTools ? "open" : ""}`}>
@@ -1327,6 +1301,28 @@ export default function Home() {
                     >
                       {mark.label && <b>{mark.label}</b>}
                     </span>
+                  ))}
+                  {tempoChangeEvents.filter((event) => {
+                    const seconds = project.midi.header.ticksToSeconds(event.ticks);
+                    return event.ticks > 0 && seconds >= viewStart && seconds <= viewEnd;
+                  }).map((event, index) => (
+                    <span
+                      className="ruler-event tempo"
+                      title={`${Math.round(event.bpm)} BPM`}
+                      key={`tempo-${index}`}
+                      style={{ left: `${timelinePercent(project.midi.header.ticksToSeconds(event.ticks))}%` }}
+                    />
+                  ))}
+                  {keyChangeEvents.filter((event) => {
+                    const seconds = project.midi.header.ticksToSeconds(event.ticks);
+                    return event.ticks > 0 && seconds >= viewStart && seconds <= viewEnd;
+                  }).map((event, index) => (
+                    <span
+                      className="ruler-event key"
+                      title={`${event.key} ${event.scale}`}
+                      key={`key-${index}`}
+                      style={{ left: `${timelinePercent(project.midi.header.ticksToSeconds(event.ticks))}%` }}
+                    />
                   ))}
                 </div>
               )}

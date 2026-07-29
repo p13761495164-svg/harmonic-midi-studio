@@ -64,7 +64,7 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /activeTimeSignature/);
   assert.match(page, /buildRulerMarks/);
   assert.match(page, /timeSignatures/);
-  assert.match(page, /METER/);
+  assert.match(page, /\{activeMeter\[0\]\}\/\{activeMeter\[1\]\}/);
   assert.match(page, /16分格/);
   assert.match(page, /timelineZoom/);
   assert.match(page, /initialSegments/);
@@ -81,11 +81,15 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
   assert.match(css, /\.track-row/);
-  assert.match(css, /\.transport-card \{ position: sticky/);
+  assert.doesNotMatch(page, /className="transport-card"/);
+  assert.doesNotMatch(page, /aria-label="播放进度"/);
+  assert.doesNotMatch(css, /\.transport-card|\.main-play|\.scrubber/);
+  assert.match(page, /className="project-live-status"/);
+  assert.match(page, /className="ruler-event tempo"/);
+  assert.match(page, /className="ruler-event key"/);
+  assert.match(css, /\.ruler-event/);
   assert.match(css, /\.global-playhead/);
   assert.match(css, /\.timbre-picker/);
-  assert.match(css, /\.scrubber \{ position: absolute/);
-  assert.match(css, /\.main-play/);
   assert.match(css, /\.edit-tools/);
   assert.match(css, /\.practice-builder/);
   assert.match(css, /\.practice-categories/);
