@@ -140,6 +140,8 @@ button { color: inherit; }
 .track-lane > i { position: absolute; z-index: 2; height: 3px; min-width: 2px; border-radius: 2px; transform: translateY(50%); pointer-events: none; }
 .track-segment { position: absolute; z-index: 1; top: 3px; bottom: 3px; min-width: 3px; border: 1px solid; border-radius: 4px; opacity: .11; cursor: crosshair; }
 .track-segment:hover { opacity: .2; }
+.sustain-range { position: absolute; z-index: 3; bottom: 2px; height: 6px; min-width: 2px; border-radius: 3px 3px 1px 1px; background: linear-gradient(90deg, #68d8c3, #55b8d6); box-shadow: 0 0 6px #62cbbf55; opacity: .78; pointer-events: auto; }
+.sustain-range::before { content: "PED"; position: absolute; left: 3px; bottom: 7px; color: #76d7c8; font: 6px var(--font-mono); letter-spacing: .4px; opacity: .8; }
 .track-progress { position: absolute; left: 0; top: 0; bottom: 0; opacity: .055; }
 .global-playhead { position: absolute; z-index: 8; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); background: #f4e0a0; box-shadow: 0 0 7px #f4e0a0aa; pointer-events: none; }
 .global-playhead::before { content: ""; position: absolute; top: 0; left: 50%; width: 8px; height: 8px; transform: translate(-50%, -1px); border-radius: 0 0 5px 5px; background: #f4e0a0; }

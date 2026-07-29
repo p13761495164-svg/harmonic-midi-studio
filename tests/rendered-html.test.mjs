@@ -13,6 +13,9 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /muted/);
   assert.match(page, /solo/);
   assert.match(page, /controlChanges\[64\]/);
+  assert.match(page, /buildSustainRanges/);
+  assert.match(page, /className="sustain-range"/);
+  assert.match(page, /段踏板/);
   assert.match(page, /keySignatures/);
   assert.match(page, /header\.tempos/);
   assert.match(page, /toArray/);
@@ -97,6 +100,7 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.ruler-mark\.measure/);
   assert.match(css, /\.timeline-scrollbar/);
   assert.match(css, /\.track-segment/);
+  assert.match(css, /\.sustain-range/);
   assert.doesNotMatch(css, /\.timeline-zoom|\.segment-editor/);
   assert.doesNotMatch(page, /splitRegion|mergeRegions/);
 });

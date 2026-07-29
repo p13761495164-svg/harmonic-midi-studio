@@ -92,6 +92,11 @@ type RulerMark = {
   label?: string;
 };
 
+type SustainRange = {
+  startTick: number;
+  endTick: number;
+};
+
 type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effects";
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
@@ -129,6 +134,22 @@ function initialSegments(source: Track, trackId: number): TrackSegment[] {
     startTick,
     durationTicks: Math.max(1, endTick - startTick),
   }];
+}
+
+function buildSustainRanges(track: Track, durationTicks: number): SustainRange[] {
+  const events = [...(track.controlChanges[64] ?? [])].sort((a, b) => a.ticks - b.ticks);
+  const ranges: SustainRange[] = [];
+  let startTick: number | null = null;
+  events.forEach((event) => {
+    if (event.value >= 0.5 && startTick === null) {
+      startTick = event.ticks;
+    } else if (event.value < 0.5 && startTick !== null) {
+      if (event.ticks > startTick) ranges.push({ startTick, endTick: event.ticks });
+      startTick = null;
+    }
+  });
+  if (startTick !== null) ranges.push({ startTick, endTick: Math.max(startTick + 1, durationTicks) });
+  return ranges;
 }
 
 function activeTimeSignature(midi: Midi, ticks: number) {
@@ -1359,6 +1380,7 @@ export default function Home() {
               const effectiveMapping = programMappings.find((mapping) => mapping.program === effectiveProgram);
               const effectiveCustom = customTimbres.find((item) => item.id === effectiveMapping?.customTimbreId);
               const timbreColor = colorForTimbre(effectiveProgram, overrideProgram === undefined && track.source.instrument.percussion);
+              const sustainRanges = buildSustainRanges(track.source, project.midi.durationTicks);
               return (
                 <div className="track-unit" key={track.id}>
                   <article className={`track-row ${audible ? "" : "inaudible"}`}>
@@ -1366,7 +1388,7 @@ export default function Home() {
                     <div className="track-meta">
                       <button className="track-meta-open" onClick={() => { setTimbrePickerTrackId(track.id); setTimbrePickerFavoritesOnly(false); setTimbrePickerQuery(""); }} aria-label={`替换 ${instrumentLabel(track.source)} 音色`}>
                         <strong>{track.displayName}</strong>
-                        <span>CH {track.source.channel + 1} · P{String(effectiveProgram + 1).padStart(3, "0")} · {overrideTimbre?.name ?? instrumentLabel(track.source)}{effectiveCustom ? ` → ${effectiveCustom.name}` : ""} · {track.source.notes.length} notes</span>
+                        <span>CH {track.source.channel + 1} · P{String(effectiveProgram + 1).padStart(3, "0")} · {overrideTimbre?.name ?? instrumentLabel(track.source)}{effectiveCustom ? ` → ${effectiveCustom.name}` : ""} · {track.source.notes.length} notes{sustainRanges.length ? ` · ${sustainRanges.length} 段踏板` : ""}</span>
                         <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : "在轨道区捏合伸缩，双指左右滚动"}</small>
                       </button>
                     </div>
@@ -1401,6 +1423,22 @@ export default function Home() {
                           }}
                         />
                       ))}
+                      {sustainRanges.map((range, sustainIndex) => {
+                        const rangeStart = Math.max(viewStart, project.midi.header.ticksToSeconds(range.startTick));
+                        const rangeEnd = Math.min(viewEnd, project.midi.header.ticksToSeconds(range.endTick));
+                        if (rangeEnd <= rangeStart) return null;
+                        return (
+                          <span
+                            className="sustain-range"
+                            key={`sustain-${sustainIndex}`}
+                            title={`Sustain ${formatTime(rangeStart)} – ${formatTime(rangeEnd)}`}
+                            style={{
+                              left: `${timelinePercent(rangeStart)}%`,
+                              width: `${Math.max(0.25, ((rangeEnd - rangeStart) / visibleDuration) * 100)}%`,
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                     <div className="track-controls">
                       <button className={track.muted ? "active mute" : ""} aria-label={`${track.displayName} 静音`} aria-pressed={track.muted} onClick={() => toggleTrack(track.id, "muted")}>M</button>
