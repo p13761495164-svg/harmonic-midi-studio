@@ -150,6 +150,10 @@ button { color: inherit; }
 .region-move-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font: 7px var(--font-mono); letter-spacing: 1px; text-shadow: 0 1px 4px #000; pointer-events: none; }
 .region-delete { position: absolute; z-index: 3; top: 2px; right: 10px; width: 18px; height: 18px; padding: 0; border: 1px solid #ff9bad; border-radius: 50%; background: #5d2230; color: #ffd3db; font: 13px/16px Arial, sans-serif; cursor: pointer; }
 .region-delete:hover { background: #8a3043; color: white; }
+.region-drop-preview { position: absolute; z-index: 6; top: 3px; bottom: 3px; min-width: 4px; display: grid; place-items: center; border: 2px dashed #c0b2ff; border-radius: 4px; background: #8c74ff3d; box-shadow: 0 0 14px #8c74ff66; pointer-events: none; }
+.region-drop-preview.invalid { border-color: #ff8197; background: #e14e6738; box-shadow: 0 0 14px #e14e6766; }
+.region-drop-preview span { overflow: hidden; padding: 2px 5px; border-radius: 3px; background: #17131fcc; color: #eee9ff; font: 7px var(--font-mono); letter-spacing: .5px; text-overflow: ellipsis; white-space: nowrap; }
+.region-drop-preview.invalid span { color: #ffc0cb; }
 .sustain-range { position: absolute; z-index: 3; bottom: 2px; height: 6px; min-width: 2px; border-radius: 3px 3px 1px 1px; background: linear-gradient(90deg, #68d8c3, #55b8d6); box-shadow: 0 0 6px #62cbbf55; opacity: .78; pointer-events: auto; }
 .sustain-range::before { content: "PED"; position: absolute; left: 3px; bottom: 7px; color: #76d7c8; font: 6px var(--font-mono); letter-spacing: .4px; opacity: .8; }
 .track-progress { position: absolute; left: 0; top: 0; bottom: 0; opacity: .055; }

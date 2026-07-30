@@ -116,6 +116,7 @@ const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.6
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
 const GM_FAMILY_IDS = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass", "reed", "pipe", "synth lead", "synth pad", "synth effects", "ethnic", "percussive", "sound effects"];
 const eventRegionIds = new WeakMap<object, string>();
+let splitRegionSequence = 1;
 const PRACTICE_CATEGORIES: { id: PracticeCategory; label: string; detail: string }[] = [
   { id: "melody", label: "旋律", detail: "主旋律、独奏、歌唱线" },
   { id: "harmony", label: "和声", detail: "钢琴、吉他与和弦声部" },
@@ -1005,6 +1006,72 @@ export default function Home() {
     notify({ text: "Region 已删除" });
   }
 
+  function splitRegionAtPlayhead(trackId: number, segmentId: string) {
+    if (!project) return;
+    const track = project.tracks.find((item) => item.id === trackId);
+    const segment = track?.segments.find((item) => item.id === segmentId);
+    if (!track || !segment) return;
+    const splitTick = Math.round(project.midi.header.secondsToTicks(position));
+    const segmentEnd = segment.startTick + segment.durationTicks;
+    if (splitTick <= segment.startTick || splitTick >= segmentEnd) {
+      notify({ text: "请先把播放线放在选中 Region 内部" });
+      return;
+    }
+    pause();
+    const rightRegionId = `${segment.id}-split-${splitRegionSequence++}`;
+    [...track.source.notes].forEach((note) => {
+      if (!belongsToRegion(note, segment.id)) return;
+      const noteEnd = note.ticks + note.durationTicks;
+      if (note.ticks >= splitTick) {
+        eventRegionIds.set(note, rightRegionId);
+      } else if (noteEnd > splitTick) {
+        const rightNote = track.source.addNote({
+          midi: note.midi,
+          ticks: splitTick,
+          durationTicks: Math.max(1, noteEnd - splitTick),
+          velocity: note.velocity,
+        });
+        eventRegionIds.set(rightNote, rightRegionId);
+        note.durationTicks = Math.max(1, splitTick - note.ticks);
+      }
+    });
+    Object.entries(track.source.controlChanges).forEach(([number, events]) => {
+      const ownedEvents = (events ?? [])
+        .filter((control) => belongsToRegion(control, segment.id))
+        .sort((a, b) => a.ticks - b.ticks);
+      ownedEvents.filter((control) => control.ticks >= splitTick).forEach((control) => eventRegionIds.set(control, rightRegionId));
+      const lastBefore = [...ownedEvents].reverse().find((control) => control.ticks < splitTick);
+      const hasBoundaryValue = ownedEvents.some((control) => control.ticks === splitTick);
+      if (lastBefore && !hasBoundaryValue) {
+        const boundaryControl = track.source.addCC({
+          number: Number(number),
+          ticks: splitTick,
+          value: lastBefore.value,
+        });
+        eventRegionIds.set(boundaryControl, rightRegionId);
+      }
+    });
+    const leftSegment = { ...segment, durationTicks: splitTick - segment.startTick };
+    const rightSegment: TrackSegment = {
+      id: rightRegionId,
+      startTick: splitTick,
+      durationTicks: segmentEnd - splitTick,
+    };
+    project.midi.header.update();
+    scheduledRef.current.clear();
+    setSelectedRegion({ trackId, segmentId: rightRegionId });
+    setProject({
+      ...project,
+      tracks: project.tracks.map((item) => item.id === trackId ? {
+        ...item,
+        segments: item.segments
+          .flatMap((candidate) => candidate.id === segmentId ? [leftSegment, rightSegment] : [candidate])
+          .sort((a, b) => a.startTick - b.startTick),
+      } : item),
+    });
+    notify({ text: `已在 ${formatTime(position)} 分割 Region` });
+  }
+
   const duration = project?.midi.duration ?? 0;
   const visibleDuration = Math.max(0.001, duration / timelineZoom);
   const maxViewStart = Math.max(0, duration - visibleDuration);
@@ -1109,15 +1176,20 @@ export default function Home() {
   }, [isPlaying, pause, play]);
 
   useEffect(() => {
-    const onDeleteRegion = (event: KeyboardEvent) => {
-      if ((event.key !== "Delete" && event.key !== "Backspace") || !selectedRegion) return;
+    const onRegionShortcut = (event: KeyboardEvent) => {
+      if (!selectedRegion) return;
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
-      event.preventDefault();
-      deleteRegion(selectedRegion.trackId, selectedRegion.segmentId);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "t") {
+        event.preventDefault();
+        splitRegionAtPlayhead(selectedRegion.trackId, selectedRegion.segmentId);
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        deleteRegion(selectedRegion.trackId, selectedRegion.segmentId);
+      }
     };
-    window.addEventListener("keydown", onDeleteRegion);
-    return () => window.removeEventListener("keydown", onDeleteRegion);
-  }, [project, selectedRegion]);
+    window.addEventListener("keydown", onRegionShortcut);
+    return () => window.removeEventListener("keydown", onRegionShortcut);
+  }, [position, project, selectedRegion]);
 
   const activeTempo = project ? currentTempo(project.midi, position) : 120;
   const activeKey = project ? currentKey(project, position) : { key: "C", scale: "major" as const, ticks: 0, estimated: true };
@@ -1427,6 +1499,11 @@ export default function Home() {
   }
 
   const progress = Math.max(0, Math.min(100, timelinePercent(position)));
+  const draggedRegion = regionGesture
+    ? project?.tracks
+        .find((track) => track.id === regionGesture.trackId)
+        ?.segments.find((segment) => segment.id === regionGesture.segmentId) ?? null
+    : null;
   const timbrePickerTrack = timbrePickerTrackId === null ? null : project?.tracks.find((track) => track.id === timbrePickerTrackId) ?? null;
   const pickerInstruments = cloudInstruments.filter((instrument) => {
     const query = timbrePickerQuery.trim().toLowerCase();
@@ -1663,6 +1740,22 @@ export default function Home() {
                       if (event.target === event.currentTarget) setSelectedRegion(null);
                     }}>
                       <div className="track-progress" style={{ width: `${progress}%`, background: timbreColor }} />
+                      {draggedRegion && regionGesture?.mode === "move" && regionDropTrackId === track.id && regionGesture.trackId !== track.id && (() => {
+                        const previewStart = project.midi.header.ticksToSeconds(draggedRegion.startTick);
+                        const previewEnd = project.midi.header.ticksToSeconds(draggedRegion.startTick + draggedRegion.durationTicks);
+                        return (
+                          <div
+                            className={`region-drop-preview ${regionDropInvalid ? "invalid" : ""}`}
+                            aria-hidden="true"
+                            style={{
+                              left: `${timelinePercent(previewStart)}%`,
+                              width: `${Math.max(0.25, ((previewEnd - previewStart) / visibleDuration) * 100)}%`,
+                            }}
+                          >
+                            <span>{regionDropInvalid ? "重叠" : "移动到这里"}</span>
+                          </div>
+                        );
+                      })()}
                       {track.segments.map((segment) => {
                         const startSeconds = project.midi.header.ticksToSeconds(segment.startTick);
                         const endSeconds = project.midi.header.ticksToSeconds(segment.startTick + segment.durationTicks);
