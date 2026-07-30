@@ -99,6 +99,15 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /请先把播放线放在选中 Region 内部/);
   assert.match(page, /className=\{`region-drop-preview/);
   assert.match(page, /移动到这里/);
+  assert.match(page, /captureEditorSnapshot/);
+  assert.match(page, /restoreEditorSnapshot/);
+  assert.match(page, /undoHistoryRef/);
+  assert.match(page, /redoHistoryRef/);
+  assert.match(page, /HISTORY_LIMIT = 30/);
+  assert.match(page, /event\.key\.toLowerCase\(\) === "z"/);
+  assert.match(page, /event\.key\.toLowerCase\(\) === "y"/);
+  assert.match(page, /if \(event\.shiftKey\) redoEditor\(\); else undoEditor\(\)/);
+  assert.match(page, /CTRL\/⌘ Z/);
   assert.match(page, /data-track-id/);
   assert.match(page, /Delete \/ Backspace/);
   assert.match(page, /thinRulerMarks/);

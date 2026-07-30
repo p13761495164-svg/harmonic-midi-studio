@@ -96,6 +96,21 @@ type RegionGesture = {
   originalDurationTicks: number;
 };
 
+type HistoryTrack = Omit<UiTrack, "source"> & {
+  midiTrackIndex: number;
+  noteRegionIds: Array<string | null>;
+  controlRegionIds: Record<string, Array<string | null>>;
+};
+
+type EditorSnapshot = {
+  midiBytes: number[];
+  name: string;
+  estimatedKey: KeyEvent;
+  tracks: HistoryTrack[];
+  trackTimbreOverrides: Record<number, number>;
+  position: number;
+};
+
 type RulerMark = {
   ticks: number;
   kind: "measure" | "beat" | "division";
@@ -117,6 +132,7 @@ const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
 const GM_FAMILY_IDS = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass", "reed", "pipe", "synth lead", "synth pad", "synth effects", "ethnic", "percussive", "sound effects"];
 const eventRegionIds = new WeakMap<object, string>();
 let splitRegionSequence = 1;
+const HISTORY_LIMIT = 30;
 const PRACTICE_CATEGORIES: { id: PracticeCategory; label: string; detail: string }[] = [
   { id: "melody", label: "旋律", detail: "主旋律、独奏、歌唱线" },
   { id: "harmony", label: "和声", detail: "钢琴、吉他与和弦声部" },
@@ -590,6 +606,9 @@ export default function Home() {
   const projectRef = useRef(project);
   const toastTimerRef = useRef<number | null>(null);
   const timelineScrollbarRef = useRef<HTMLDivElement | null>(null);
+  const undoHistoryRef = useRef<EditorSnapshot[]>([]);
+  const redoHistoryRef = useRef<EditorSnapshot[]>([]);
+  const pendingRegionHistoryRef = useRef<EditorSnapshot | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
 
@@ -806,6 +825,110 @@ export default function Home() {
     stopVoices();
   }, [stopVoices]);
 
+  function captureEditorSnapshot(): EditorSnapshot | null {
+    if (!project) return null;
+    return {
+      midiBytes: Array.from(project.midi.toArray()),
+      name: project.name,
+      estimatedKey: { ...project.estimatedKey },
+      tracks: project.tracks.map((track) => ({
+        id: track.id,
+        displayName: track.displayName,
+        muted: track.muted,
+        solo: track.solo,
+        segments: track.segments.map((segment) => ({ ...segment })),
+        excludedFromExport: track.excludedFromExport,
+        practiceGenerated: track.practiceGenerated,
+        practicePreviousMuted: track.practicePreviousMuted,
+        practicePreviousSolo: track.practicePreviousSolo,
+        midiTrackIndex: project.midi.tracks.indexOf(track.source),
+        noteRegionIds: [...track.source.notes]
+          .sort((a, b) => a.ticks - b.ticks || a.midi - b.midi || a.durationTicks - b.durationTicks)
+          .map((note) => eventRegionIds.get(note) ?? null),
+        controlRegionIds: Object.fromEntries(
+          Object.entries(track.source.controlChanges).map(([number, events]) => [
+            number,
+            [...(events ?? [])]
+              .sort((a, b) => a.ticks - b.ticks || a.value - b.value)
+              .map((control) => eventRegionIds.get(control) ?? null),
+          ]),
+        ),
+      })),
+      trackTimbreOverrides: { ...trackTimbreOverrides },
+      position,
+    };
+  }
+
+  function restoreEditorSnapshot(snapshot: EditorSnapshot) {
+    pause();
+    const midi = new Midi(Uint8Array.from(snapshot.midiBytes));
+    midi.header.update();
+    const tracks = snapshot.tracks.flatMap((savedTrack): UiTrack[] => {
+      const source = midi.tracks[savedTrack.midiTrackIndex];
+      if (!source) return [];
+      const sortedNotes = [...source.notes].sort((a, b) => a.ticks - b.ticks || a.midi - b.midi || a.durationTicks - b.durationTicks);
+      savedTrack.noteRegionIds.forEach((regionId, index) => {
+        if (regionId && sortedNotes[index]) eventRegionIds.set(sortedNotes[index], regionId);
+      });
+      Object.entries(savedTrack.controlRegionIds).forEach(([number, regionIds]) => {
+        const controls = [...(source.controlChanges[Number(number)] ?? [])]
+          .sort((a, b) => a.ticks - b.ticks || a.value - b.value);
+        regionIds.forEach((regionId, index) => {
+          if (regionId && controls[index]) eventRegionIds.set(controls[index], regionId);
+        });
+      });
+      return [{
+        id: savedTrack.id,
+        source,
+        displayName: savedTrack.displayName,
+        muted: savedTrack.muted,
+        solo: savedTrack.solo,
+        segments: savedTrack.segments.map((segment) => ({ ...segment })),
+        excludedFromExport: savedTrack.excludedFromExport,
+        practiceGenerated: savedTrack.practiceGenerated,
+        practicePreviousMuted: savedTrack.practicePreviousMuted,
+        practicePreviousSolo: savedTrack.practicePreviousSolo,
+      }];
+    });
+    setProject({
+      name: snapshot.name,
+      midi,
+      tracks,
+      estimatedKey: { ...snapshot.estimatedKey },
+    });
+    setTrackTimbreOverrides({ ...snapshot.trackTimbreOverrides });
+    setPosition(Math.min(snapshot.position, midi.duration));
+    setSelectedRegion(null);
+    setRegionGesture(null);
+    setRegionDropTrackId(null);
+    setRegionDropInvalid(false);
+    scheduledRef.current.clear();
+  }
+
+  function pushUndoSnapshot(snapshot = captureEditorSnapshot()) {
+    if (!snapshot) return;
+    undoHistoryRef.current = [...undoHistoryRef.current.slice(-(HISTORY_LIMIT - 1)), snapshot];
+    redoHistoryRef.current = [];
+  }
+
+  function undoEditor() {
+    const previous = undoHistoryRef.current.pop();
+    const current = captureEditorSnapshot();
+    if (!previous || !current) return;
+    redoHistoryRef.current = [...redoHistoryRef.current.slice(-(HISTORY_LIMIT - 1)), current];
+    restoreEditorSnapshot(previous);
+    notify({ text: "已撤销上一步编辑" });
+  }
+
+  function redoEditor() {
+    const next = redoHistoryRef.current.pop();
+    const current = captureEditorSnapshot();
+    if (!next || !current) return;
+    undoHistoryRef.current = [...undoHistoryRef.current.slice(-(HISTORY_LIMIT - 1)), current];
+    restoreEditorSnapshot(next);
+    notify({ text: "已重做上一步编辑" });
+  }
+
   function updateRegionSegment(trackId: number, segmentId: string, startTick: number, durationTicks: number) {
     if (!project) return;
     setProject({
@@ -831,6 +954,7 @@ export default function Home() {
     event.stopPropagation();
     pause();
     event.currentTarget.setPointerCapture(event.pointerId);
+    pendingRegionHistoryRef.current = captureEditorSnapshot();
     setSelectedRegion({ trackId, segmentId: segment.id });
     setRegionDropInvalid(false);
     setRegionGesture({
@@ -909,6 +1033,8 @@ export default function Home() {
     const targetTrack = regionGesture.mode === "move" && Number.isFinite(detectedDropTrackId)
       ? project.tracks.find((item) => item.id === detectedDropTrackId)
       : null;
+    const historySnapshot = pendingRegionHistoryRef.current;
+    pendingRegionHistoryRef.current = null;
     setRegionGesture(null);
     setRegionDropTrackId(null);
     setRegionDropInvalid(false);
@@ -921,6 +1047,7 @@ export default function Home() {
         return;
       }
       const deltaTicks = segment.startTick - regionGesture.originalStartTick;
+      if ((deltaTicks || (targetTrack && targetTrack.id !== track.id)) && historySnapshot) pushUndoSnapshot(historySnapshot);
       if (deltaTicks) {
         track.source.notes.filter((note) => belongsToRegion(note, segment.id)).forEach((note) => { note.ticks += deltaTicks; });
         Object.values(track.source.controlChanges).forEach((events) => events?.forEach((control) => {
@@ -957,6 +1084,9 @@ export default function Home() {
         return;
       }
     } else {
+      if ((segment.startTick !== regionGesture.originalStartTick || segment.startTick + segment.durationTicks !== originalEndTick) && historySnapshot) {
+        pushUndoSnapshot(historySnapshot);
+      }
       const trimStart = segment.startTick;
       const trimEnd = segment.startTick + segment.durationTicks;
       const ownedPedalEvents = (track.source.controlChanges[64] ?? [])
@@ -1008,6 +1138,7 @@ export default function Home() {
     const track = project.tracks.find((item) => item.id === trackId);
     const segment = track?.segments.find((item) => item.id === segmentId);
     if (!track || !segment) return;
+    pushUndoSnapshot();
     pause();
     for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
       if (belongsToRegion(track.source.notes[index], segmentId)) track.source.notes.splice(index, 1);
@@ -1038,6 +1169,7 @@ export default function Home() {
       notify({ text: "请先把播放线放在选中 Region 内部" });
       return;
     }
+    pushUndoSnapshot();
     pause();
     const rightRegionId = `${segment.id}-split-${splitRegionSequence++}`;
     [...track.source.notes].forEach((note) => {
@@ -1212,6 +1344,22 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onRegionShortcut);
   }, [position, project, selectedRegion]);
 
+  useEffect(() => {
+    const onHistoryShortcut = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redoEditor(); else undoEditor();
+      } else if (event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redoEditor();
+      }
+    };
+    window.addEventListener("keydown", onHistoryShortcut);
+    return () => window.removeEventListener("keydown", onHistoryShortcut);
+  }, [position, project, trackTimbreOverrides]);
+
   const activeTempo = project ? currentTempo(project.midi, position) : 120;
   const activeKey = project ? currentKey(project, position) : { key: "C", scale: "major" as const, ticks: 0, estimated: true };
   const positionTicks = project ? Math.max(0, Math.round(project.midi.header.secondsToTicks(position))) : 0;
@@ -1257,6 +1405,9 @@ export default function Home() {
       const midi = new Midi(await file.arrayBuffer());
       midi.header.update();
       const nextProject = projectFromMidi(midi, file.name);
+      undoHistoryRef.current = [];
+      redoHistoryRef.current = [];
+      pendingRegionHistoryRef.current = null;
       setProject(nextProject);
       setPosition(0);
       setTempoDraft(Math.round(currentTempo(midi, 0)));
@@ -1279,6 +1430,7 @@ export default function Home() {
   }
 
   function toggleTrack(id: number, kind: "muted" | "solo") {
+    pushUndoSnapshot();
     setProject((current) => current ? {
       ...current,
       tracks: current.tracks.map((track) => track.id === id ? { ...track, [kind]: !track[kind] } : track),
@@ -1288,6 +1440,7 @@ export default function Home() {
   }
 
   function changeTrackTimbre(id: number, value: string) {
+    pushUndoSnapshot();
     setTrackTimbreOverrides((current) => {
       const next = { ...current };
       if (value === "") delete next[id];
@@ -1319,6 +1472,7 @@ export default function Home() {
 
   function addTempoEvent() {
     if (!project) return;
+    pushUndoSnapshot();
     const ticks = Math.max(0, Math.round(project.midi.header.secondsToTicks(position)));
     project.midi.header.tempos = [
       ...project.midi.header.tempos.filter((event) => event.ticks !== ticks),
@@ -1332,6 +1486,7 @@ export default function Home() {
 
   function addKeyEvent() {
     if (!project) return;
+    pushUndoSnapshot();
     const ticks = Math.max(0, Math.round(project.midi.header.secondsToTicks(position)));
     project.midi.header.keySignatures = [
       ...project.midi.header.keySignatures.filter((event) => event.ticks !== ticks),
@@ -1347,6 +1502,7 @@ export default function Home() {
       notify({ text: "当前文件没有 Sustain 踏板事件" });
       return;
     }
+    pushUndoSnapshot();
     const backup = project.tracks.map((track) => [...(track.source.controlChanges[64] ?? [])]);
     project.tracks.forEach((track) => { track.source.controlChanges[64] = []; });
     setProject({ ...project });
@@ -1367,6 +1523,7 @@ export default function Home() {
     if (!project) return;
     const target = project.tracks.find((track) => track.id === id);
     if (!target) return;
+    pushUndoSnapshot();
     const previousTracks = project.tracks;
     const midiIndex = project.midi.tracks.indexOf(target.source);
     project.midi.tracks.splice(midiIndex, 1);
@@ -1409,6 +1566,7 @@ export default function Home() {
       return;
     }
 
+    pushUndoSnapshot();
     pause();
     const previousTracks = project.tracks;
     const practiceTrack = project.midi.addTrack();
@@ -1565,6 +1723,9 @@ export default function Home() {
           <button className="primary-import" onClick={() => inputRef.current?.click()}>选择 MIDI 文件 <span>↗</span></button>
           <button className="demo-button" onClick={() => {
             const demo = makeDemoProject();
+            undoHistoryRef.current = [];
+            redoHistoryRef.current = [];
+            pendingRegionHistoryRef.current = null;
             setProject(demo);
             setTempoDraft(112);
             setKeyDraft("C");
@@ -1937,7 +2098,7 @@ export default function Home() {
           {toast.action && <button onClick={toast.action.run}>{toast.action.label}</button>}
         </div>
       )}
-      <footer><span>HARMONIC / LOCAL MIDI ENGINE</span><span><kbd>SPACE</kbd> PLAY / PAUSE</span></footer>
+      <footer><span>HARMONIC / LOCAL MIDI ENGINE</span><span><kbd>SPACE</kbd> PLAY / PAUSE · <kbd>CTRL/⌘ Z</kbd> UNDO · <kbd>CTRL Y</kbd> REDO</span></footer>
     </main>
   );
 }
