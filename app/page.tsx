@@ -1179,7 +1179,7 @@ export default function Home() {
     const onRegionShortcut = (event: KeyboardEvent) => {
       if (!selectedRegion) return;
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "t") {
+      if (event.shiftKey && event.code === "KeyT") {
         event.preventDefault();
         splitRegionAtPlayhead(selectedRegion.trackId, selectedRegion.segmentId);
       } else if (event.key === "Delete" || event.key === "Backspace") {
@@ -1787,6 +1787,20 @@ export default function Home() {
                                   onPointerCancel={finishRegionGesture}
                                 />
                                 <span className="region-move-label">MOVE</span>
+                                <button
+                                  className="region-split"
+                                  aria-label="从播放线分割 Region"
+                                  title="从播放线分割 Region（Shift+T）"
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                  }}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    splitRegionAtPlayhead(track.id, segment.id);
+                                  }}
+                                >✂</button>
                                 <button
                                   className="region-delete"
                                   aria-label="删除 Region"

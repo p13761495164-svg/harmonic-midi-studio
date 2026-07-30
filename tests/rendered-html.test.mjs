@@ -88,7 +88,10 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /目标位置已有 Region，不能重叠/);
   assert.match(page, /splitRegionAtPlayhead/);
   assert.match(page, /splitRegionSequence/);
-  assert.match(page, /event\.metaKey \|\| event\.ctrlKey/);
+  assert.match(page, /event\.shiftKey && event\.code === "KeyT"/);
+  assert.doesNotMatch(page, /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key\.toLowerCase\(\) === "t"/);
+  assert.match(page, /className="region-split"/);
+  assert.match(page, /从播放线分割 Region（Shift\+T）/);
   assert.match(page, /请先把播放线放在选中 Region 内部/);
   assert.match(page, /className=\{`region-drop-preview/);
   assert.match(page, /移动到这里/);
@@ -102,7 +105,7 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /handleTimelineScrollbar/);
   assert.match(page, /轨道区捏合伸缩/);
   assert.doesNotMatch(page, /Zoom In|Zoom Out|横向查看位置/);
-  assert.doesNotMatch(page, /REGION EDITOR|播放线分割|裁剪左侧|裁剪右侧|删除片段|开始位置（16分格）/);
+  assert.doesNotMatch(page, /REGION EDITOR|裁剪左侧|裁剪右侧|删除片段|开始位置（16分格）/);
   assert.doesNotMatch(page, /splitSelectedSegment|trimSelectedSegment|deleteSelectedSegment|moveSelectedSegment|rebuildTrackFromSegments/);
   assert.match(page, /播放/);
   assert.match(page, /暂停/);
@@ -126,6 +129,7 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.track-segment\.selected/);
   assert.match(css, /\.region-handle/);
   assert.match(css, /\.region-delete/);
+  assert.match(css, /\.region-split/);
   assert.match(css, /\.track-unit\.region-drop-target/);
   assert.match(css, /\.track-unit\.region-drop-invalid/);
   assert.match(css, /\.region-drop-preview/);

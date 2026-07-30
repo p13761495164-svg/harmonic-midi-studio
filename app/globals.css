@@ -150,6 +150,8 @@ button { color: inherit; }
 .region-move-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font: 7px var(--font-mono); letter-spacing: 1px; text-shadow: 0 1px 4px #000; pointer-events: none; }
 .region-delete { position: absolute; z-index: 3; top: 2px; right: 10px; width: 18px; height: 18px; padding: 0; border: 1px solid #ff9bad; border-radius: 50%; background: #5d2230; color: #ffd3db; font: 13px/16px Arial, sans-serif; cursor: pointer; }
 .region-delete:hover { background: #8a3043; color: white; }
+.region-split { position: absolute; z-index: 3; top: 2px; right: 32px; width: 22px; height: 18px; padding: 0; border: 1px solid #b7a6ff; border-radius: 9px; background: #3d3263; color: #eee9ff; font: 10px/16px Arial, sans-serif; cursor: pointer; }
+.region-split:hover { background: #5c4b91; color: white; }
 .region-drop-preview { position: absolute; z-index: 6; top: 3px; bottom: 3px; min-width: 4px; display: grid; place-items: center; border: 2px dashed #c0b2ff; border-radius: 4px; background: #8c74ff3d; box-shadow: 0 0 14px #8c74ff66; pointer-events: none; }
 .region-drop-preview.invalid { border-color: #ff8197; background: #e14e6738; box-shadow: 0 0 14px #e14e6766; }
 .region-drop-preview span { overflow: hidden; padding: 2px 5px; border-radius: 3px; background: #17131fcc; color: #eee9ff; font: 7px var(--font-mono); letter-spacing: .5px; text-overflow: ellipsis; white-space: nowrap; }
