@@ -983,14 +983,15 @@ export default function Home() {
     const targetTick = project.midi.header.secondsToTicks(Math.max(0, originSeconds + secondsDelta));
     const rawDelta = targetTick - regionGesture.originalStartTick;
     const snapTicks = Math.max(1, Math.round(project.midi.header.ppq / 4));
-    const deltaTicks = Math.round(rawDelta / snapTicks) * snapTicks;
+    const preciseDeltaTicks = Math.round(rawDelta);
+    const moveDeltaTicks = Math.round(rawDelta / snapTicks) * snapTicks;
     const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
     let startTick = regionGesture.originalStartTick;
     let durationTicks = regionGesture.originalDurationTicks;
     const sourceTrack = project.tracks.find((track) => track.id === regionGesture.trackId);
     const siblings = sourceTrack?.segments.filter((segment) => segment.id !== regionGesture.segmentId) ?? [];
     if (regionGesture.mode === "move") {
-      const requestedStart = Math.max(0, Math.min(project.midi.durationTicks - durationTicks, regionGesture.originalStartTick + deltaTicks));
+      const requestedStart = Math.max(0, Math.min(project.midi.durationTicks - durationTicks, regionGesture.originalStartTick + moveDeltaTicks));
       startTick = dropTrackId !== null && dropTrackId !== regionGesture.trackId
         ? requestedStart
         : closestAvailableRegionStart(
@@ -1000,14 +1001,14 @@ export default function Home() {
             Math.max(0, project.midi.durationTicks - durationTicks),
           ) ?? regionGesture.originalStartTick;
     } else if (regionGesture.mode === "trim-start") {
-      startTick = Math.max(0, Math.min(originalEndTick - snapTicks, regionGesture.originalStartTick + deltaTicks));
+      startTick = Math.max(0, Math.min(originalEndTick - 1, regionGesture.originalStartTick + preciseDeltaTicks));
       const previousEnd = siblings
         .filter((segment) => segment.startTick < regionGesture.originalStartTick)
         .reduce((latest, segment) => Math.max(latest, segment.startTick + segment.durationTicks), 0);
       startTick = Math.max(startTick, previousEnd);
       durationTicks = originalEndTick - startTick;
     } else {
-      const endTick = Math.max(regionGesture.originalStartTick + snapTicks, Math.min(project.midi.durationTicks, originalEndTick + deltaTicks));
+      const endTick = Math.max(regionGesture.originalStartTick + 1, Math.min(project.midi.durationTicks, originalEndTick + preciseDeltaTicks));
       const nextStart = siblings
         .filter((segment) => segment.startTick >= originalEndTick)
         .reduce((earliest, segment) => Math.min(earliest, segment.startTick), project.midi.durationTicks);
