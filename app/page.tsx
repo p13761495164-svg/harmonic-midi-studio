@@ -115,6 +115,7 @@ const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.6
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
 const GM_FAMILY_IDS = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass", "reed", "pipe", "synth lead", "synth pad", "synth effects", "ethnic", "percussive", "sound effects"];
+const eventRegionIds = new WeakMap<object, string>();
 const PRACTICE_CATEGORIES: { id: PracticeCategory; label: string; detail: string }[] = [
   { id: "melody", label: "旋律", detail: "主旋律、独奏、歌唱线" },
   { id: "harmony", label: "和声", detail: "钢琴、吉他与和弦声部" },
@@ -137,13 +138,20 @@ function segmentId(trackId: number) {
 
 function initialSegments(source: Track, trackId: number): TrackSegment[] {
   if (!source.notes.length) return [];
+  const id = segmentId(trackId);
+  source.notes.forEach((note) => eventRegionIds.set(note, id));
+  Object.values(source.controlChanges).forEach((events) => events?.forEach((control) => eventRegionIds.set(control, id)));
   const startTick = Math.min(...source.notes.map((note) => note.ticks));
   const endTick = Math.max(...source.notes.map((note) => note.ticks + note.durationTicks));
   return [{
-    id: segmentId(trackId),
+    id,
     startTick,
     durationTicks: Math.max(1, endTick - startTick),
   }];
+}
+
+function belongsToRegion(event: object, regionId: string) {
+  return eventRegionIds.get(event) === regionId;
 }
 
 function buildSustainRanges(track: Track, durationTicks: number): SustainRange[] {
@@ -530,6 +538,7 @@ export default function Home() {
   const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
   const [selectedRegion, setSelectedRegion] = useState<{ trackId: number; segmentId: string } | null>(null);
   const [regionGesture, setRegionGesture] = useState<RegionGesture | null>(null);
+  const [regionDropTrackId, setRegionDropTrackId] = useState<number | null>(null);
   const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
   const [cloudInstruments, setCloudInstruments] = useState<CloudInstrument[]>([]);
   const [customTimbres, setCustomTimbres] = useState<CustomTimbre[]>([]);
@@ -806,6 +815,11 @@ export default function Home() {
     if (!project || !regionGesture || event.pointerId !== regionGesture.pointerId || laneGeometry.width <= 0) return;
     event.preventDefault();
     event.stopPropagation();
+    if (regionGesture.mode === "move") {
+      const dropRow = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-track-id]");
+      const dropTrackId = dropRow ? Number(dropRow.dataset.trackId) : null;
+      setRegionDropTrackId(Number.isFinite(dropTrackId) ? dropTrackId : null);
+    }
     const secondsDelta = ((event.clientX - regionGesture.originClientX) / laneGeometry.width) * visibleDuration;
     const originSeconds = project.midi.header.ticksToSeconds(regionGesture.originalStartTick);
     const targetTick = project.midi.header.secondsToTicks(Math.max(0, originSeconds + secondsDelta));
@@ -833,22 +847,58 @@ export default function Home() {
     event.stopPropagation();
     const track = project.tracks.find((item) => item.id === regionGesture.trackId);
     const segment = track?.segments.find((item) => item.id === regionGesture.segmentId);
+    const dropRow = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-track-id]");
+    const detectedDropTrackId = dropRow ? Number(dropRow.dataset.trackId) : null;
+    const targetTrack = regionGesture.mode === "move" && Number.isFinite(detectedDropTrackId)
+      ? project.tracks.find((item) => item.id === detectedDropTrackId)
+      : null;
     setRegionGesture(null);
+    setRegionDropTrackId(null);
     if (!track || !segment) return;
     const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
     if (regionGesture.mode === "move") {
       const deltaTicks = segment.startTick - regionGesture.originalStartTick;
       if (deltaTicks) {
-        track.source.notes.forEach((note) => { note.ticks += deltaTicks; });
+        track.source.notes.filter((note) => belongsToRegion(note, segment.id)).forEach((note) => { note.ticks += deltaTicks; });
         Object.values(track.source.controlChanges).forEach((events) => events?.forEach((control) => {
-          control.ticks = Math.max(0, control.ticks + deltaTicks);
+          if (belongsToRegion(control, segment.id)) control.ticks = Math.max(0, control.ticks + deltaTicks);
         }));
+      }
+      if (targetTrack && targetTrack.id !== track.id) {
+        const movedNotes = track.source.notes.filter((note) => belongsToRegion(note, segment.id));
+        for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
+          if (belongsToRegion(track.source.notes[index], segment.id)) track.source.notes.splice(index, 1);
+        }
+        targetTrack.source.notes.push(...movedNotes);
+        targetTrack.source.notes.sort((a, b) => a.ticks - b.ticks || a.midi - b.midi);
+        Object.entries(track.source.controlChanges).forEach(([number, events]) => {
+          const movedControls = (events ?? []).filter((control) => belongsToRegion(control, segment.id));
+          track.source.controlChanges[Number(number)] = (events ?? []).filter((control) => !belongsToRegion(control, segment.id));
+          if (movedControls.length) {
+            targetTrack.source.controlChanges[Number(number)] = [
+              ...(targetTrack.source.controlChanges[Number(number)] ?? []),
+              ...movedControls,
+            ].sort((a, b) => a.ticks - b.ticks);
+          }
+        });
+        const nextTracks = project.tracks.map((item) => {
+          if (item.id === track.id) return { ...item, segments: item.segments.filter((candidate) => candidate.id !== segment.id) };
+          if (item.id === targetTrack.id) return { ...item, segments: [...item.segments, segment].sort((a, b) => a.startTick - b.startTick) };
+          return item;
+        });
+        project.midi.header.update();
+        scheduledRef.current.clear();
+        setSelectedRegion({ trackId: targetTrack.id, segmentId: segment.id });
+        setProject({ ...project, tracks: nextTracks });
+        notify({ text: `Region 已移到 “${targetTrack.displayName}”` });
+        return;
       }
     } else {
       const trimStart = segment.startTick;
       const trimEnd = segment.startTick + segment.durationTicks;
       for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
         const note = track.source.notes[index];
+        if (!belongsToRegion(note, segment.id)) continue;
         const noteEnd = note.ticks + note.durationTicks;
         if (noteEnd <= trimStart || note.ticks >= trimEnd) {
           track.source.notes.splice(index, 1);
@@ -860,7 +910,9 @@ export default function Home() {
         }
       }
       Object.entries(track.source.controlChanges).forEach(([number, events]) => {
-        track.source.controlChanges[Number(number)] = (events ?? []).filter((control) => control.ticks >= trimStart && control.ticks <= trimEnd);
+        track.source.controlChanges[Number(number)] = (events ?? []).filter((control) => (
+          !belongsToRegion(control, segment.id) || (control.ticks >= trimStart && control.ticks <= trimEnd)
+        ));
       });
     }
     if (segment.startTick !== regionGesture.originalStartTick || segment.startTick + segment.durationTicks !== originalEndTick) {
@@ -869,6 +921,30 @@ export default function Home() {
       setProject({ ...project });
       notify({ text: regionGesture.mode === "move" ? "Region 已平移" : "Region 已 Trim" });
     }
+  }
+
+  function deleteRegion(trackId: number, segmentId: string) {
+    if (!project) return;
+    const track = project.tracks.find((item) => item.id === trackId);
+    const segment = track?.segments.find((item) => item.id === segmentId);
+    if (!track || !segment) return;
+    pause();
+    for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
+      if (belongsToRegion(track.source.notes[index], segmentId)) track.source.notes.splice(index, 1);
+    }
+    Object.entries(track.source.controlChanges).forEach(([number, events]) => {
+      track.source.controlChanges[Number(number)] = (events ?? []).filter((control) => !belongsToRegion(control, segmentId));
+    });
+    project.midi.header.update();
+    scheduledRef.current.clear();
+    setSelectedRegion(null);
+    setProject({
+      ...project,
+      tracks: project.tracks.map((item) => item.id === trackId
+        ? { ...item, segments: item.segments.filter((candidate) => candidate.id !== segmentId) }
+        : item),
+    });
+    notify({ text: "Region 已删除" });
   }
 
   const duration = project?.midi.duration ?? 0;
@@ -973,6 +1049,17 @@ export default function Home() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isPlaying, pause, play]);
+
+  useEffect(() => {
+    const onDeleteRegion = (event: KeyboardEvent) => {
+      if ((event.key !== "Delete" && event.key !== "Backspace") || !selectedRegion) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
+      event.preventDefault();
+      deleteRegion(selectedRegion.trackId, selectedRegion.segmentId);
+    };
+    window.addEventListener("keydown", onDeleteRegion);
+    return () => window.removeEventListener("keydown", onDeleteRegion);
+  }, [project, selectedRegion]);
 
   const activeTempo = project ? currentTempo(project.midi, position) : 120;
   const activeKey = project ? currentKey(project, position) : { key: "C", scale: "major" as const, ticks: 0, estimated: true };
@@ -1500,7 +1587,11 @@ export default function Home() {
               const timbreColor = colorForTimbre(effectiveProgram, overrideProgram === undefined && track.source.instrument.percussion);
               const sustainRanges = buildSustainRanges(track.source, project.midi.durationTicks);
               return (
-                <div className="track-unit" key={track.id}>
+                <div
+                  className={`track-unit ${regionGesture?.mode === "move" && regionDropTrackId === track.id && regionGesture.trackId !== track.id ? "region-drop-target" : ""}`}
+                  data-track-id={track.id}
+                  key={track.id}
+                >
                   <article className={`track-row ${audible ? "" : "inaudible"}`}>
                     <div className="track-index" style={{ color: timbreColor }}>{String(index + 1).padStart(2, "0")}</div>
                     <div className="track-meta">
@@ -1545,6 +1636,20 @@ export default function Home() {
                                   onPointerCancel={finishRegionGesture}
                                 />
                                 <span className="region-move-label">MOVE</span>
+                                <button
+                                  className="region-delete"
+                                  aria-label="删除 Region"
+                                  title="删除 Region（Delete / Backspace）"
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                  }}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    deleteRegion(track.id, segment.id);
+                                  }}
+                                >×</button>
                                 <button
                                   className="region-handle end"
                                   aria-label="Trim Region 结尾"
