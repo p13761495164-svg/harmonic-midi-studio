@@ -181,11 +181,11 @@ function closestAvailableRegionStart(
   return candidates.sort((a, b) => Math.abs(a - requestedStart) - Math.abs(b - requestedStart))[0] ?? null;
 }
 
-function buildSustainRanges(track: Track, durationTicks: number): SustainRange[] {
-  const events = [...(track.controlChanges[64] ?? [])].sort((a, b) => a.ticks - b.ticks);
+function sustainRangesFromEvents(events: Array<{ ticks: number; value: number }>, fallbackEndTick: number): SustainRange[] {
+  const sortedEvents = [...events].sort((a, b) => a.ticks - b.ticks);
   const ranges: SustainRange[] = [];
   let startTick: number | null = null;
-  events.forEach((event) => {
+  sortedEvents.forEach((event) => {
     if (event.value >= 0.5 && startTick === null) {
       startTick = event.ticks;
     } else if (event.value < 0.5 && startTick !== null) {
@@ -193,8 +193,12 @@ function buildSustainRanges(track: Track, durationTicks: number): SustainRange[]
       startTick = null;
     }
   });
-  if (startTick !== null) ranges.push({ startTick, endTick: Math.max(startTick + 1, durationTicks) });
+  if (startTick !== null) ranges.push({ startTick, endTick: Math.max(startTick + 1, fallbackEndTick) });
   return ranges;
+}
+
+function buildSustainRanges(track: Track, durationTicks: number): SustainRange[] {
+  return sustainRangesFromEvents(track.controlChanges[64] ?? [], durationTicks);
 }
 
 function activeTimeSignature(midi: Midi, ticks: number) {
@@ -955,6 +959,14 @@ export default function Home() {
     } else {
       const trimStart = segment.startTick;
       const trimEnd = segment.startTick + segment.durationTicks;
+      const ownedPedalEvents = (track.source.controlChanges[64] ?? [])
+        .filter((control) => belongsToRegion(control, segment.id));
+      const trimmedPedalRanges = sustainRangesFromEvents(ownedPedalEvents, originalEndTick)
+        .map((range) => ({
+          startTick: Math.max(trimStart, range.startTick),
+          endTick: Math.min(trimEnd, range.endTick),
+        }))
+        .filter((range) => range.endTick > range.startTick);
       for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
         const note = track.source.notes[index];
         if (!belongsToRegion(note, segment.id)) continue;
@@ -969,9 +981,18 @@ export default function Home() {
         }
       }
       Object.entries(track.source.controlChanges).forEach(([number, events]) => {
+        if (Number(number) === 64) return;
         track.source.controlChanges[Number(number)] = (events ?? []).filter((control) => (
           !belongsToRegion(control, segment.id) || (control.ticks >= trimStart && control.ticks <= trimEnd)
         ));
+      });
+      track.source.controlChanges[64] = (track.source.controlChanges[64] ?? [])
+        .filter((control) => !belongsToRegion(control, segment.id));
+      trimmedPedalRanges.forEach((range) => {
+        const pedalDown = track.source.addCC({ number: 64, ticks: range.startTick, value: 1 });
+        const pedalUp = track.source.addCC({ number: 64, ticks: range.endTick, value: 0 });
+        eventRegionIds.set(pedalDown, segment.id);
+        eventRegionIds.set(pedalUp, segment.id);
       });
     }
     if (segment.startTick !== regionGesture.originalStartTick || segment.startTick + segment.durationTicks !== originalEndTick) {

@@ -14,6 +14,10 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /solo/);
   assert.match(page, /controlChanges\[64\]/);
   assert.match(page, /buildSustainRanges/);
+  assert.match(page, /sustainRangesFromEvents/);
+  assert.match(page, /trimmedPedalRanges/);
+  assert.match(page, /pedalDown/);
+  assert.match(page, /pedalUp/);
   assert.match(page, /className="sustain-range"/);
   assert.match(page, /段踏板/);
   assert.match(page, /keySignatures/);
