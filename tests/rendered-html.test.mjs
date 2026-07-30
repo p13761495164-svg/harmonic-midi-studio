@@ -104,10 +104,12 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /undoHistoryRef/);
   assert.match(page, /redoHistoryRef/);
   assert.match(page, /HISTORY_LIMIT = 30/);
-  assert.match(page, /event\.key\.toLowerCase\(\) === "z"/);
-  assert.match(page, /event\.key\.toLowerCase\(\) === "y"/);
-  assert.match(page, /if \(event\.shiftKey\) redoEditor\(\); else undoEditor\(\)/);
-  assert.match(page, /CTRL\/⌘ Z/);
+  assert.match(page, /event\.code === "KeyZ"/);
+  assert.match(page, /event\.code === "KeyY"/);
+  assert.match(page, /!event\.shiftKey \|\| event\.metaKey \|\| event\.ctrlKey \|\| event\.altKey/);
+  assert.match(page, /SHIFT Z/);
+  assert.match(page, /SHIFT Y/);
+  assert.doesNotMatch(page, /CTRL\/⌘ Z|CTRL Y/);
   assert.match(page, /data-track-id/);
   assert.match(page, /Delete \/ Backspace/);
   assert.match(page, /thinRulerMarks/);

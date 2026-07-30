@@ -1347,11 +1347,11 @@ export default function Home() {
   useEffect(() => {
     const onHistoryShortcut = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() === "z") {
+      if (!event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.code === "KeyZ") {
         event.preventDefault();
-        if (event.shiftKey) redoEditor(); else undoEditor();
-      } else if (event.key.toLowerCase() === "y") {
+        undoEditor();
+      } else if (event.code === "KeyY") {
         event.preventDefault();
         redoEditor();
       }
@@ -2098,7 +2098,7 @@ export default function Home() {
           {toast.action && <button onClick={toast.action.run}>{toast.action.label}</button>}
         </div>
       )}
-      <footer><span>HARMONIC / LOCAL MIDI ENGINE</span><span><kbd>SPACE</kbd> PLAY / PAUSE · <kbd>CTRL/⌘ Z</kbd> UNDO · <kbd>CTRL Y</kbd> REDO</span></footer>
+      <footer><span>HARMONIC / LOCAL MIDI ENGINE</span><span><kbd>SPACE</kbd> PLAY / PAUSE · <kbd>SHIFT Z</kbd> UNDO · <kbd>SHIFT Y</kbd> REDO</span></footer>
     </main>
   );
 }
