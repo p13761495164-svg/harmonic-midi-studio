@@ -979,13 +979,16 @@ export default function Home() {
       setRegionDropTrackId(Number.isFinite(dropTrackId) ? dropTrackId : null);
     }
     const secondsDelta = ((event.clientX - regionGesture.originClientX) / laneGeometry.width) * visibleDuration;
-    const originSeconds = project.midi.header.ticksToSeconds(regionGesture.originalStartTick);
+    const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
+    const gestureAnchorTick = regionGesture.mode === "trim-end"
+      ? originalEndTick
+      : regionGesture.originalStartTick;
+    const originSeconds = project.midi.header.ticksToSeconds(gestureAnchorTick);
     const targetTick = project.midi.header.secondsToTicks(Math.max(0, originSeconds + secondsDelta));
-    const rawDelta = targetTick - regionGesture.originalStartTick;
+    const rawDelta = targetTick - gestureAnchorTick;
     const snapTicks = Math.max(1, Math.round(project.midi.header.ppq / 4));
     const preciseDeltaTicks = Math.round(rawDelta);
     const moveDeltaTicks = Math.round(rawDelta / snapTicks) * snapTicks;
-    const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
     let startTick = regionGesture.originalStartTick;
     let durationTicks = regionGesture.originalDurationTicks;
     const sourceTrack = project.tracks.find((track) => track.id === regionGesture.trackId);

@@ -82,6 +82,8 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /initialSegments/);
   assert.match(page, /beginRegionGesture/);
   assert.match(page, /moveRegionGesture/);
+  assert.match(page, /gestureAnchorTick = regionGesture\.mode === "trim-end"/);
+  assert.match(page, /targetTick - gestureAnchorTick/);
   assert.match(page, /preciseDeltaTicks = Math\.round\(rawDelta\)/);
   assert.match(page, /moveDeltaTicks = Math\.round\(rawDelta \/ snapTicks\) \* snapTicks/);
   assert.match(page, /originalEndTick - 1/);
