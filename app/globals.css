@@ -161,6 +161,10 @@ button { color: inherit; }
 .track-progress { position: absolute; left: 0; top: 0; bottom: 0; opacity: .055; }
 .global-playhead { position: absolute; z-index: 8; top: 0; bottom: 0; width: 2px; transform: translateX(-1px); background: #f4e0a0; box-shadow: 0 0 7px #f4e0a0aa; pointer-events: none; }
 .global-playhead::before { content: ""; position: absolute; top: 0; left: 50%; width: 8px; height: 8px; transform: translate(-50%, -1px); border-radius: 0 0 5px 5px; background: #f4e0a0; }
+.region-trim-guide { position: absolute; z-index: 22; top: 0; bottom: 0; width: 1px; transform: translateX(-.5px); background: #c9bcff; box-shadow: 0 0 7px #9b85ffcc; pointer-events: none; }
+.region-trim-guide::before { content: ""; position: absolute; top: 0; left: 50%; width: 0; height: 0; transform: translateX(-50%); border-top: 0; border-right: 5px solid transparent; border-bottom: 7px solid #c9bcff; border-left: 5px solid transparent; }
+.region-trim-guide b { position: absolute; top: 8px; left: 6px; padding: 3px 5px; border: 1px solid #7565b2; border-radius: 3px; background: #17131fe8; color: #ded6ff; font: 7px var(--font-mono); font-weight: 600; letter-spacing: .5px; white-space: nowrap; }
+.region-trim-guide.trim-end b { right: 6px; left: auto; }
 .track-controls { display: flex; justify-content: flex-end; gap: 7px; }
 .track-controls button { width: 36px; height: 36px; border: 1px solid #403c47; border-radius: 5px; background: #211f27; color: #85808c; font: 10px var(--font-mono); font-weight: 800; cursor: pointer; }
 .track-controls button:hover { color: white; border-color: #686270; }

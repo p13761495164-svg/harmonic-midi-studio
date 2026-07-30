@@ -1683,6 +1683,14 @@ export default function Home() {
         .find((track) => track.id === regionGesture.trackId)
         ?.segments.find((segment) => segment.id === regionGesture.segmentId) ?? null
     : null;
+  const trimGuideTick = draggedRegion && regionGesture && regionGesture.mode !== "move"
+    ? regionGesture.mode === "trim-start"
+      ? draggedRegion.startTick
+      : draggedRegion.startTick + draggedRegion.durationTicks
+    : null;
+  const trimGuideSeconds = trimGuideTick === null || !project
+    ? null
+    : project.midi.header.ticksToSeconds(trimGuideTick);
   const timbrePickerTrack = timbrePickerTrackId === null ? null : project?.tracks.find((track) => track.id === timbrePickerTrackId) ?? null;
   const pickerInstruments = cloudInstruments.filter((instrument) => {
     const query = timbrePickerQuery.trim().toLowerCase();
@@ -1889,6 +1897,15 @@ export default function Home() {
                 aria-hidden="true"
                 style={{ left: `${laneGeometry.left + laneGeometry.width * progress / 100}px` }}
               />
+            )}
+            {laneGeometry.width > 0 && trimGuideSeconds !== null && trimGuideSeconds >= viewStart && trimGuideSeconds <= viewEnd && (
+              <span
+                className={`region-trim-guide ${regionGesture?.mode === "trim-end" ? "trim-end" : "trim-start"}`}
+                aria-hidden="true"
+                style={{ left: `${laneGeometry.left + laneGeometry.width * timelinePercent(trimGuideSeconds) / 100}px` }}
+              >
+                <b>{regionGesture?.mode === "trim-end" ? "TRIM OUT" : "TRIM IN"} · {formatTime(trimGuideSeconds)}</b>
+              </span>
             )}
             {project.tracks.map((track, index) => {
               const hasSolo = project.tracks.some((item) => item.solo);

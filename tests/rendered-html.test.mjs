@@ -41,6 +41,11 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /background: timbreColor/);
   assert.doesNotMatch(page, /TRACK_COLORS/);
   assert.match(page, /className="global-playhead"/);
+  assert.match(page, /trimGuideTick/);
+  assert.match(page, /trimGuideSeconds/);
+  assert.match(page, /region-trim-guide/);
+  assert.match(page, /TRIM OUT/);
+  assert.match(page, /TRIM IN/);
   assert.match(page, /fetchInstruments/);
   assert.match(page, /favoriteTimbres/);
   assert.match(page, /timbre-picker/);
@@ -133,6 +138,8 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /className="ruler-event key"/);
   assert.match(css, /\.ruler-event/);
   assert.match(css, /\.global-playhead/);
+  assert.match(css, /\.region-trim-guide/);
+  assert.match(css, /\.region-trim-guide\.trim-end/);
   assert.match(css, /\.timbre-picker/);
   assert.match(css, /\.edit-tools/);
   assert.match(css, /\.practice-builder/);
