@@ -126,6 +126,7 @@ type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effec
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+const APP_VERSION = "2026.07.30.1";
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
@@ -577,6 +578,7 @@ export default function Home() {
   const [keyDraft, setKeyDraft] = useState("C");
   const [scaleDraft, setScaleDraft] = useState<"major" | "minor">("major");
   const [toast, setToast] = useState<Toast | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showPracticeMerge, setShowPracticeMerge] = useState(false);
   const [practiceCategories, setPracticeCategories] = useState(DEFAULT_PRACTICE_CATEGORIES);
@@ -653,6 +655,30 @@ export default function Home() {
     setToast(next);
     toastTimerRef.current = window.setTimeout(() => setToast(null), next.action ? 5500 : 2600);
   }, []);
+
+  const checkForUpdate = useCallback(async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const updateUrl = new URL(window.location.href);
+      updateUrl.searchParams.set("_update", String(Date.now()));
+      const response = await fetch(updateUrl.toString(), { cache: "no-store" });
+      if (!response.ok) throw new Error(`Update check failed: ${response.status}`);
+      const latestPage = new DOMParser().parseFromString(await response.text(), "text/html");
+      const latestVersion = latestPage.querySelector<HTMLElement>("[data-app-version]")?.dataset.appVersion;
+      if (!latestVersion) throw new Error("Version marker missing");
+      if (latestVersion === APP_VERSION) {
+        notify({ text: `当前已是最新版本 v${APP_VERSION}` });
+        return;
+      }
+      notify({ text: `发现新版本 v${latestVersion}，正在获取…` });
+      window.setTimeout(() => window.location.replace(updateUrl.toString()), 350);
+    } catch {
+      notify({ text: "版本检查失败，请稍后再试" });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [checkingUpdate, notify]);
 
   const ensureAudio = useCallback(() => {
     if (audioRef.current) {
@@ -1708,6 +1734,16 @@ export default function Home() {
         <div className="brand">
           <span className="brand-bars"><i /><i /><i /><i /></span>
           <span>HARMONIC</span>
+          <button
+            type="button"
+            className={`version-badge ${checkingUpdate ? "checking" : ""}`}
+            data-app-version={APP_VERSION}
+            title="检查并获取最新版本"
+            aria-label={`当前版本 v${APP_VERSION}，点击检查更新`}
+            onClick={checkForUpdate}
+          >
+            {checkingUpdate ? "CHECK…" : `v${APP_VERSION}`}
+          </button>
           <small>MIDI PLAYER</small>
         </div>
         <div className="header-actions">

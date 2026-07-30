@@ -21,6 +21,10 @@ button { color: inherit; }
 .studio-header { display: flex; align-items: center; justify-content: space-between; padding: 0 34px; border-bottom: 1px solid var(--line); background: #131217db; backdrop-filter: blur(18px); }
 .brand { display: flex; align-items: center; gap: 11px; font-weight: 800; letter-spacing: 3px; font-size: 13px; }
 .brand small { margin-left: 3px; padding: 4px 7px; color: #77717f; border: 1px solid #383541; border-radius: 3px; font-size: 7px; letter-spacing: 1.5px; }
+.version-badge { margin-left: -4px; padding: 4px 7px; border: 1px solid #50475f; border-radius: 999px; background: #201b2b; color: #aa97ff; font: 7px var(--font-mono); letter-spacing: .35px; cursor: pointer; transition: border-color .16s ease, background .16s ease, color .16s ease, opacity .16s ease; }
+.version-badge:hover { border-color: var(--purple); background: #2c2440; color: #fff; }
+.version-badge:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.version-badge.checking { opacity: .65; cursor: wait; }
 .brand-bars { width: 29px; height: 26px; display: flex; align-items: center; gap: 3px; }
 .brand-bars i { width: 4px; border-radius: 3px; background: linear-gradient(#b89fff, #7757ee); }
 .brand-bars i:nth-child(1) { height: 10px; }.brand-bars i:nth-child(2) { height: 22px; }.brand-bars i:nth-child(3) { height: 15px; }.brand-bars i:nth-child(4) { height: 25px; }
@@ -320,7 +324,9 @@ footer kbd { padding: 2px 4px; border: 1px solid #423e48; border-radius: 2px; co
 @media (max-width: 620px) {
   .studio-shell { grid-template-rows: 62px 1fr 28px; }
   .studio-header { padding: 0 16px; }
+  .brand { gap: 7px; }
   .brand small { display: none; }
+  .version-badge { margin-left: -2px; }
   .project-summary { align-items: center; margin-bottom: 12px; }
   .project-summary h1 { max-width: 68vw; font-size: 18px; }
   .project-live-status small { display: none; }
