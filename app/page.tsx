@@ -126,7 +126,7 @@ type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effec
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-const APP_VERSION = "2026.07.30.3";
+const APP_VERSION = "2026.07.30.4";
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
@@ -1324,6 +1324,14 @@ export default function Home() {
   useEffect(() => {
     const trackArea = trackListRef.current;
     if (!trackArea || !duration) return;
+    let safariPinch: { startZoom: number; anchorRatio: number; anchorTime: number } | null = null;
+    const applyTimelineZoom = (zoom: number, anchorRatio: number, anchorTime: number) => {
+      const nextVisibleDuration = duration / zoom;
+      const nextViewStart = Number(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)).toFixed(5));
+      timelineViewportRef.current = { zoom, viewStart: nextViewStart };
+      setTimelineZoom(zoom);
+      setTimelineViewStart(nextViewStart);
+    };
     const onWheel = (event: WheelEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const lane = target?.closest<HTMLElement>(".track-lane");
@@ -1339,11 +1347,7 @@ export default function Home() {
         const anchorTime = currentViewport.viewStart + currentVisibleDuration * anchorRatio;
         const controlledDelta = Math.max(-80, Math.min(80, event.deltaY));
         const zoom = Number(Math.max(1, Math.min(12, currentViewport.zoom * Math.exp(-controlledDelta * 0.004))).toFixed(4));
-        const nextVisibleDuration = duration / zoom;
-        const nextViewStart = Number(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)).toFixed(5));
-        timelineViewportRef.current = { zoom, viewStart: nextViewStart };
-        setTimelineZoom(zoom);
-        setTimelineViewStart(nextViewStart);
+        applyTimelineZoom(zoom, anchorRatio, anchorTime);
         return;
       }
       const horizontalDelta = Math.abs(event.deltaX) > 0.2 ? event.deltaX : event.shiftKey ? event.deltaY : 0;
@@ -1354,8 +1358,48 @@ export default function Home() {
         scrollbar.scrollLeft += horizontalDelta;
       }
     };
+    const onSafariGestureStart = (event: Event) => {
+      const gesture = event as Event & { clientX?: number };
+      const target = gesture.target instanceof Element ? gesture.target : null;
+      const lane = target?.closest<HTMLElement>(".track-lane");
+      if (!lane || !trackArea.contains(lane)) return;
+      gesture.preventDefault();
+      gesture.stopPropagation();
+      const rect = lane.getBoundingClientRect();
+      const clientX = typeof gesture.clientX === "number" ? gesture.clientX : rect.left + rect.width / 2;
+      const anchorRatio = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+      const currentViewport = timelineViewportRef.current;
+      safariPinch = {
+        startZoom: currentViewport.zoom,
+        anchorRatio,
+        anchorTime: currentViewport.viewStart + (duration / currentViewport.zoom) * anchorRatio,
+      };
+    };
+    const onSafariGestureChange = (event: Event) => {
+      if (!safariPinch) return;
+      const gesture = event as Event & { scale?: number };
+      gesture.preventDefault();
+      gesture.stopPropagation();
+      const scale = typeof gesture.scale === "number" ? gesture.scale : 1;
+      const zoom = Number(Math.max(1, Math.min(12, safariPinch.startZoom * scale)).toFixed(4));
+      applyTimelineZoom(zoom, safariPinch.anchorRatio, safariPinch.anchorTime);
+    };
+    const onSafariGestureEnd = (event: Event) => {
+      if (!safariPinch) return;
+      event.preventDefault();
+      event.stopPropagation();
+      safariPinch = null;
+    };
     trackArea.addEventListener("wheel", onWheel, { passive: false });
-    return () => trackArea.removeEventListener("wheel", onWheel);
+    trackArea.addEventListener("gesturestart", onSafariGestureStart, { passive: false });
+    trackArea.addEventListener("gesturechange", onSafariGestureChange, { passive: false });
+    trackArea.addEventListener("gestureend", onSafariGestureEnd, { passive: false });
+    return () => {
+      trackArea.removeEventListener("wheel", onWheel);
+      trackArea.removeEventListener("gesturestart", onSafariGestureStart);
+      trackArea.removeEventListener("gesturechange", onSafariGestureChange);
+      trackArea.removeEventListener("gestureend", onSafariGestureEnd);
+    };
   }, [duration]);
 
   useEffect(() => {

@@ -124,6 +124,10 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /Delete \/ Backspace/);
   assert.match(page, /thinRulerMarks/);
   assert.match(page, /addEventListener\("wheel", onWheel, \{ passive: false \}\)/);
+  assert.match(page, /addEventListener\("gesturestart", onSafariGestureStart, \{ passive: false \}\)/);
+  assert.match(page, /addEventListener\("gesturechange", onSafariGestureChange, \{ passive: false \}\)/);
+  assert.match(page, /addEventListener\("gestureend", onSafariGestureEnd, \{ passive: false \}\)/);
+  assert.match(page, /safariPinch\.startZoom \* scale/);
   assert.match(page, /horizontalDelta/);
   assert.match(page, /event\.deltaX/);
   assert.match(page, /timelineScrollbarRef/);
@@ -139,7 +143,7 @@ test("ships the focused MIDI track player", async () => {
   assert.doesNotMatch(page, /aria-label="播放进度"/);
   assert.doesNotMatch(css, /\.transport-card|\.main-play|\.scrubber/);
   assert.match(page, /className="project-live-status"/);
-  assert.match(page, /APP_VERSION = "2026\.07\.30\.3"/);
+  assert.match(page, /APP_VERSION = "2026\.07\.30\.4"/);
   assert.match(page, /checkForUpdate/);
   assert.match(page, /cache: "no-store"/);
   assert.match(page, /new DOMParser\(\)/);
