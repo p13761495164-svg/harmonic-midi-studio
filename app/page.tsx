@@ -154,6 +154,32 @@ function belongsToRegion(event: object, regionId: string) {
   return eventRegionIds.get(event) === regionId;
 }
 
+function regionsOverlap(startTick: number, durationTicks: number, segment: TrackSegment) {
+  const endTick = startTick + durationTicks;
+  const segmentEnd = segment.startTick + segment.durationTicks;
+  return startTick < segmentEnd && endTick > segment.startTick;
+}
+
+function closestAvailableRegionStart(
+  requestedStart: number,
+  durationTicks: number,
+  siblings: TrackSegment[],
+  maxStart: number,
+) {
+  const candidates = [
+    requestedStart,
+    0,
+    maxStart,
+    ...siblings.flatMap((segment) => [
+      segment.startTick + segment.durationTicks,
+      segment.startTick - durationTicks,
+    ]),
+  ]
+    .map((value) => Math.max(0, Math.min(maxStart, value)))
+    .filter((value) => siblings.every((segment) => !regionsOverlap(value, durationTicks, segment)));
+  return candidates.sort((a, b) => Math.abs(a - requestedStart) - Math.abs(b - requestedStart))[0] ?? null;
+}
+
 function buildSustainRanges(track: Track, durationTicks: number): SustainRange[] {
   const events = [...(track.controlChanges[64] ?? [])].sort((a, b) => a.ticks - b.ticks);
   const ranges: SustainRange[] = [];
@@ -539,6 +565,7 @@ export default function Home() {
   const [selectedRegion, setSelectedRegion] = useState<{ trackId: number; segmentId: string } | null>(null);
   const [regionGesture, setRegionGesture] = useState<RegionGesture | null>(null);
   const [regionDropTrackId, setRegionDropTrackId] = useState<number | null>(null);
+  const [regionDropInvalid, setRegionDropInvalid] = useState(false);
   const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
   const [cloudInstruments, setCloudInstruments] = useState<CloudInstrument[]>([]);
   const [customTimbres, setCustomTimbres] = useState<CustomTimbre[]>([]);
@@ -800,6 +827,7 @@ export default function Home() {
     pause();
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedRegion({ trackId, segmentId: segment.id });
+    setRegionDropInvalid(false);
     setRegionGesture({
       pointerId: event.pointerId,
       trackId,
@@ -815,9 +843,10 @@ export default function Home() {
     if (!project || !regionGesture || event.pointerId !== regionGesture.pointerId || laneGeometry.width <= 0) return;
     event.preventDefault();
     event.stopPropagation();
+    let dropTrackId: number | null = null;
     if (regionGesture.mode === "move") {
       const dropRow = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-track-id]");
-      const dropTrackId = dropRow ? Number(dropRow.dataset.trackId) : null;
+      dropTrackId = dropRow ? Number(dropRow.dataset.trackId) : null;
       setRegionDropTrackId(Number.isFinite(dropTrackId) ? dropTrackId : null);
     }
     const secondsDelta = ((event.clientX - regionGesture.originClientX) / laneGeometry.width) * visibleDuration;
@@ -829,14 +858,37 @@ export default function Home() {
     const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
     let startTick = regionGesture.originalStartTick;
     let durationTicks = regionGesture.originalDurationTicks;
+    const sourceTrack = project.tracks.find((track) => track.id === regionGesture.trackId);
+    const siblings = sourceTrack?.segments.filter((segment) => segment.id !== regionGesture.segmentId) ?? [];
     if (regionGesture.mode === "move") {
-      startTick = Math.max(0, Math.min(project.midi.durationTicks - durationTicks, regionGesture.originalStartTick + deltaTicks));
+      const requestedStart = Math.max(0, Math.min(project.midi.durationTicks - durationTicks, regionGesture.originalStartTick + deltaTicks));
+      startTick = dropTrackId !== null && dropTrackId !== regionGesture.trackId
+        ? requestedStart
+        : closestAvailableRegionStart(
+            requestedStart,
+            durationTicks,
+            siblings,
+            Math.max(0, project.midi.durationTicks - durationTicks),
+          ) ?? regionGesture.originalStartTick;
     } else if (regionGesture.mode === "trim-start") {
       startTick = Math.max(0, Math.min(originalEndTick - snapTicks, regionGesture.originalStartTick + deltaTicks));
+      const previousEnd = siblings
+        .filter((segment) => segment.startTick < regionGesture.originalStartTick)
+        .reduce((latest, segment) => Math.max(latest, segment.startTick + segment.durationTicks), 0);
+      startTick = Math.max(startTick, previousEnd);
       durationTicks = originalEndTick - startTick;
     } else {
       const endTick = Math.max(regionGesture.originalStartTick + snapTicks, Math.min(project.midi.durationTicks, originalEndTick + deltaTicks));
-      durationTicks = endTick - regionGesture.originalStartTick;
+      const nextStart = siblings
+        .filter((segment) => segment.startTick >= originalEndTick)
+        .reduce((earliest, segment) => Math.min(earliest, segment.startTick), project.midi.durationTicks);
+      durationTicks = Math.min(endTick, nextStart) - regionGesture.originalStartTick;
+    }
+    if (regionGesture.mode === "move" && dropTrackId !== null && dropTrackId !== regionGesture.trackId) {
+      const targetTrack = project.tracks.find((track) => track.id === dropTrackId);
+      setRegionDropInvalid(Boolean(targetTrack?.segments.some((segment) => regionsOverlap(startTick, durationTicks, segment))));
+    } else {
+      setRegionDropInvalid(false);
     }
     updateRegionSegment(regionGesture.trackId, regionGesture.segmentId, Math.round(startTick), Math.max(1, Math.round(durationTicks)));
   }
@@ -854,9 +906,15 @@ export default function Home() {
       : null;
     setRegionGesture(null);
     setRegionDropTrackId(null);
+    setRegionDropInvalid(false);
     if (!track || !segment) return;
     const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
     if (regionGesture.mode === "move") {
+      if (targetTrack && targetTrack.id !== track.id && targetTrack.segments.some((candidate) => regionsOverlap(segment.startTick, segment.durationTicks, candidate))) {
+        updateRegionSegment(track.id, segment.id, regionGesture.originalStartTick, regionGesture.originalDurationTicks);
+        notify({ text: "目标位置已有 Region，不能重叠" });
+        return;
+      }
       const deltaTicks = segment.startTick - regionGesture.originalStartTick;
       if (deltaTicks) {
         track.source.notes.filter((note) => belongsToRegion(note, segment.id)).forEach((note) => { note.ticks += deltaTicks; });
@@ -1588,7 +1646,7 @@ export default function Home() {
               const sustainRanges = buildSustainRanges(track.source, project.midi.durationTicks);
               return (
                 <div
-                  className={`track-unit ${regionGesture?.mode === "move" && regionDropTrackId === track.id && regionGesture.trackId !== track.id ? "region-drop-target" : ""}`}
+                  className={`track-unit ${regionGesture?.mode === "move" && regionDropTrackId === track.id && regionGesture.trackId !== track.id ? regionDropInvalid ? "region-drop-invalid" : "region-drop-target" : ""}`}
                   data-track-id={track.id}
                   key={track.id}
                 >

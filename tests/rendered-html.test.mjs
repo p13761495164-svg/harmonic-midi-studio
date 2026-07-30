@@ -83,6 +83,9 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /deleteRegion/);
   assert.match(page, /Region 已删除/);
   assert.match(page, /Region 已移到/);
+  assert.match(page, /regionsOverlap/);
+  assert.match(page, /closestAvailableRegionStart/);
+  assert.match(page, /目标位置已有 Region，不能重叠/);
   assert.match(page, /data-track-id/);
   assert.match(page, /Delete \/ Backspace/);
   assert.match(page, /thinRulerMarks/);
@@ -118,6 +121,7 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.region-handle/);
   assert.match(css, /\.region-delete/);
   assert.match(css, /\.track-unit\.region-drop-target/);
+  assert.match(css, /\.track-unit\.region-drop-invalid/);
   assert.match(css, /\.timeline-ruler-shell \{ position: sticky/);
   assert.match(css, /\.sustain-range/);
   assert.doesNotMatch(css, /\.timeline-zoom|\.segment-editor/);
