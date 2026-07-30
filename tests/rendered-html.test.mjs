@@ -139,7 +139,7 @@ test("ships the focused MIDI track player", async () => {
   assert.doesNotMatch(page, /aria-label="播放进度"/);
   assert.doesNotMatch(css, /\.transport-card|\.main-play|\.scrubber/);
   assert.match(page, /className="project-live-status"/);
-  assert.match(page, /APP_VERSION = "2026\.07\.30\.2"/);
+  assert.match(page, /APP_VERSION = "2026\.07\.30\.3"/);
   assert.match(page, /checkForUpdate/);
   assert.match(page, /cache: "no-store"/);
   assert.match(page, /new DOMParser\(\)/);
@@ -149,6 +149,10 @@ test("ships the focused MIDI track player", async () => {
   assert.match(css, /\.version-badge/);
   assert.match(css, /\.track-row:has\(\.track-segment\.selected\)/);
   assert.match(css, /background: #e9e3ff/);
+  assert.doesNotMatch(css, /box-shadow: 0 0 5px currentColor/);
+  assert.match(page, /timelineViewportRef/);
+  assert.match(page, /Math\.exp\(-controlledDelta \* 0\.004\)/);
+  assert.match(page, /Math\.abs\(timelineViewportRef\.current\.viewStart - nextViewStart\) < 0\.002/);
   assert.match(page, /className="ruler-event tempo"/);
   assert.match(page, /className="ruler-event key"/);
   assert.match(css, /\.ruler-event/);

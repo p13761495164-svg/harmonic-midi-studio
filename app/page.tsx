@@ -126,7 +126,7 @@ type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effec
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-const APP_VERSION = "2026.07.30.2";
+const APP_VERSION = "2026.07.30.3";
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
@@ -608,11 +608,15 @@ export default function Home() {
   const projectRef = useRef(project);
   const toastTimerRef = useRef<number | null>(null);
   const timelineScrollbarRef = useRef<HTMLDivElement | null>(null);
+  const timelineViewportRef = useRef({ zoom: 1, viewStart: 0 });
   const undoHistoryRef = useRef<EditorSnapshot[]>([]);
   const redoHistoryRef = useRef<EditorSnapshot[]>([]);
   const pendingRegionHistoryRef = useRef<EditorSnapshot | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => {
+    timelineViewportRef.current = { zoom: timelineZoom, viewStart: timelineViewStart };
+  }, [timelineViewStart, timelineZoom]);
 
   useEffect(() => {
     try {
@@ -1327,18 +1331,24 @@ export default function Home() {
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
         event.stopPropagation();
+        if (Math.abs(event.deltaY) < 0.01) return;
         const rect = lane.getBoundingClientRect();
         const anchorRatio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
-        const anchorTime = viewStart + visibleDuration * anchorRatio;
-        const zoom = Math.max(1, Math.min(12, timelineZoom * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+        const currentViewport = timelineViewportRef.current;
+        const currentVisibleDuration = duration / currentViewport.zoom;
+        const anchorTime = currentViewport.viewStart + currentVisibleDuration * anchorRatio;
+        const controlledDelta = Math.max(-80, Math.min(80, event.deltaY));
+        const zoom = Number(Math.max(1, Math.min(12, currentViewport.zoom * Math.exp(-controlledDelta * 0.004))).toFixed(4));
         const nextVisibleDuration = duration / zoom;
+        const nextViewStart = Number(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)).toFixed(5));
+        timelineViewportRef.current = { zoom, viewStart: nextViewStart };
         setTimelineZoom(zoom);
-        setTimelineViewStart(Math.max(0, Math.min(duration - nextVisibleDuration, anchorTime - nextVisibleDuration * anchorRatio)));
+        setTimelineViewStart(nextViewStart);
         return;
       }
       const horizontalDelta = Math.abs(event.deltaX) > 0.2 ? event.deltaX : event.shiftKey ? event.deltaY : 0;
       const scrollbar = timelineScrollbarRef.current;
-      if (horizontalDelta && scrollbar && timelineZoom > 1) {
+      if (horizontalDelta && scrollbar && timelineViewportRef.current.zoom > 1) {
         event.preventDefault();
         event.stopPropagation();
         scrollbar.scrollLeft += horizontalDelta;
@@ -1346,7 +1356,7 @@ export default function Home() {
     };
     trackArea.addEventListener("wheel", onWheel, { passive: false });
     return () => trackArea.removeEventListener("wheel", onWheel);
-  }, [duration, timelineZoom, viewStart, visibleDuration]);
+  }, [duration]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1497,7 +1507,10 @@ export default function Home() {
     const scrollbar = timelineScrollbarRef.current;
     if (!scrollbar) return;
     const maxScrollLeft = Math.max(0, scrollbar.scrollWidth - scrollbar.clientWidth);
-    setTimelineViewStart(maxScrollLeft > 0 ? (scrollbar.scrollLeft / maxScrollLeft) * maxViewStart : 0);
+    const nextViewStart = maxScrollLeft > 0 ? (scrollbar.scrollLeft / maxScrollLeft) * maxViewStart : 0;
+    if (Math.abs(timelineViewportRef.current.viewStart - nextViewStart) < 0.002) return;
+    timelineViewportRef.current = { ...timelineViewportRef.current, viewStart: nextViewStart };
+    setTimelineViewStart(nextViewStart);
   }
 
   function addTempoEvent() {

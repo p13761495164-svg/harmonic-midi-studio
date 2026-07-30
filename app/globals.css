@@ -144,7 +144,7 @@ button { color: inherit; }
 .track-meta span { display: block; overflow: hidden; color: #89828f; font: 8px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .track-meta small { display: block; margin-top: 5px; color: #6d6574; font: 7px var(--font-mono); }
 .track-lane { position: relative; height: 58px; overflow: hidden; overscroll-behavior-x: contain; border: 1px solid #3a3542; border-radius: 6px; background-color: #111015; background-image: linear-gradient(to right, #29252f 1px, transparent 1px), linear-gradient(to bottom, transparent 49%, #25222b 50%, transparent 51%); background-size: 12.5% 100%, 100% 100%; box-shadow: inset 0 1px 8px #0007; }
-.track-lane > i { position: absolute; z-index: 2; height: 4px; min-width: 2px; border-radius: 3px; transform: translateY(50%); pointer-events: none; box-shadow: 0 0 5px currentColor; }
+.track-lane > i { position: absolute; z-index: 2; height: 4px; min-width: 2px; border-radius: 2px; transform: translateY(50%); pointer-events: none; }
 .track-segment { position: absolute; z-index: 1; top: 3px; bottom: 3px; min-width: 3px; border: 1px solid; border-radius: 5px; opacity: .14; cursor: grab; touch-action: none; transition: opacity .14s ease, box-shadow .14s ease; }
 .track-segment:hover { opacity: .22; }
 .track-segment.selected { z-index: 5; border-width: 2px; outline: 1px solid #f4f0ff; outline-offset: 1px; opacity: .3; cursor: grab; box-shadow: 0 0 0 2px #8c74ff66, 0 8px 22px #0009; }
