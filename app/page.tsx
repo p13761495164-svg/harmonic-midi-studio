@@ -86,6 +86,16 @@ type TrackSegment = {
   durationTicks: number;
 };
 
+type RegionGesture = {
+  pointerId: number;
+  trackId: number;
+  segmentId: string;
+  mode: "move" | "trim-start" | "trim-end";
+  originClientX: number;
+  originalStartTick: number;
+  originalDurationTicks: number;
+};
+
 type RulerMark = {
   ticks: number;
   kind: "measure" | "beat" | "division";
@@ -518,6 +528,8 @@ export default function Home() {
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [timelineViewStart, setTimelineViewStart] = useState(0);
   const [laneGeometry, setLaneGeometry] = useState({ left: 0, width: 0 });
+  const [selectedRegion, setSelectedRegion] = useState<{ trackId: number; segmentId: string } | null>(null);
+  const [regionGesture, setRegionGesture] = useState<RegionGesture | null>(null);
   const [savedTimbres, setSavedTimbres] = useState<Record<string, TimbreSettings>>({});
   const [cloudInstruments, setCloudInstruments] = useState<CloudInstrument[]>([]);
   const [customTimbres, setCustomTimbres] = useState<CustomTimbre[]>([]);
@@ -752,6 +764,112 @@ export default function Home() {
     cancelAnimationFrame(animationRef.current);
     stopVoices();
   }, [stopVoices]);
+
+  function updateRegionSegment(trackId: number, segmentId: string, startTick: number, durationTicks: number) {
+    if (!project) return;
+    setProject({
+      ...project,
+      tracks: project.tracks.map((track) => track.id === trackId ? {
+        ...track,
+        segments: track.segments.map((segment) => segment.id === segmentId ? {
+          ...segment,
+          startTick,
+          durationTicks,
+        } : segment),
+      } : track),
+    });
+  }
+
+  function beginRegionGesture(
+    event: React.PointerEvent<HTMLElement>,
+    trackId: number,
+    segment: TrackSegment,
+    mode: RegionGesture["mode"],
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    pause();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedRegion({ trackId, segmentId: segment.id });
+    setRegionGesture({
+      pointerId: event.pointerId,
+      trackId,
+      segmentId: segment.id,
+      mode,
+      originClientX: event.clientX,
+      originalStartTick: segment.startTick,
+      originalDurationTicks: segment.durationTicks,
+    });
+  }
+
+  function moveRegionGesture(event: React.PointerEvent<HTMLElement>) {
+    if (!project || !regionGesture || event.pointerId !== regionGesture.pointerId || laneGeometry.width <= 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const secondsDelta = ((event.clientX - regionGesture.originClientX) / laneGeometry.width) * visibleDuration;
+    const originSeconds = project.midi.header.ticksToSeconds(regionGesture.originalStartTick);
+    const targetTick = project.midi.header.secondsToTicks(Math.max(0, originSeconds + secondsDelta));
+    const rawDelta = targetTick - regionGesture.originalStartTick;
+    const snapTicks = Math.max(1, Math.round(project.midi.header.ppq / 4));
+    const deltaTicks = Math.round(rawDelta / snapTicks) * snapTicks;
+    const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
+    let startTick = regionGesture.originalStartTick;
+    let durationTicks = regionGesture.originalDurationTicks;
+    if (regionGesture.mode === "move") {
+      startTick = Math.max(0, Math.min(project.midi.durationTicks - durationTicks, regionGesture.originalStartTick + deltaTicks));
+    } else if (regionGesture.mode === "trim-start") {
+      startTick = Math.max(0, Math.min(originalEndTick - snapTicks, regionGesture.originalStartTick + deltaTicks));
+      durationTicks = originalEndTick - startTick;
+    } else {
+      const endTick = Math.max(regionGesture.originalStartTick + snapTicks, Math.min(project.midi.durationTicks, originalEndTick + deltaTicks));
+      durationTicks = endTick - regionGesture.originalStartTick;
+    }
+    updateRegionSegment(regionGesture.trackId, regionGesture.segmentId, Math.round(startTick), Math.max(1, Math.round(durationTicks)));
+  }
+
+  function finishRegionGesture(event: React.PointerEvent<HTMLElement>) {
+    if (!project || !regionGesture || event.pointerId !== regionGesture.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const track = project.tracks.find((item) => item.id === regionGesture.trackId);
+    const segment = track?.segments.find((item) => item.id === regionGesture.segmentId);
+    setRegionGesture(null);
+    if (!track || !segment) return;
+    const originalEndTick = regionGesture.originalStartTick + regionGesture.originalDurationTicks;
+    if (regionGesture.mode === "move") {
+      const deltaTicks = segment.startTick - regionGesture.originalStartTick;
+      if (deltaTicks) {
+        track.source.notes.forEach((note) => { note.ticks += deltaTicks; });
+        Object.values(track.source.controlChanges).forEach((events) => events?.forEach((control) => {
+          control.ticks = Math.max(0, control.ticks + deltaTicks);
+        }));
+      }
+    } else {
+      const trimStart = segment.startTick;
+      const trimEnd = segment.startTick + segment.durationTicks;
+      for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
+        const note = track.source.notes[index];
+        const noteEnd = note.ticks + note.durationTicks;
+        if (noteEnd <= trimStart || note.ticks >= trimEnd) {
+          track.source.notes.splice(index, 1);
+        } else {
+          const nextStart = Math.max(note.ticks, trimStart);
+          const nextEnd = Math.min(noteEnd, trimEnd);
+          note.ticks = nextStart;
+          note.durationTicks = Math.max(1, nextEnd - nextStart);
+        }
+      }
+      Object.entries(track.source.controlChanges).forEach(([number, events]) => {
+        track.source.controlChanges[Number(number)] = (events ?? []).filter((control) => control.ticks >= trimStart && control.ticks <= trimEnd);
+      });
+    }
+    if (segment.startTick !== regionGesture.originalStartTick || segment.startTick + segment.durationTicks !== originalEndTick) {
+      project.midi.header.update();
+      scheduledRef.current.clear();
+      setProject({ ...project });
+      notify({ text: regionGesture.mode === "move" ? "Region 已平移" : "Region 已 Trim" });
+    }
+  }
 
   const duration = project?.midi.duration ?? 0;
   const visibleDuration = Math.max(0.001, duration / timelineZoom);
@@ -1392,23 +1510,52 @@ export default function Home() {
                         <small>{track.practiceGenerated ? "钢琴练习合并轨 · 点击可替换音色" : track.excludedFromExport ? "已并入练习轨 · 原轨不重复导出" : "在轨道区捏合伸缩，双指左右滚动"}</small>
                       </button>
                     </div>
-                    <div className="track-lane">
+                    <div className="track-lane" onPointerDown={(event) => {
+                      if (event.target === event.currentTarget) setSelectedRegion(null);
+                    }}>
                       <div className="track-progress" style={{ width: `${progress}%`, background: timbreColor }} />
                       {track.segments.map((segment) => {
                         const startSeconds = project.midi.header.ticksToSeconds(segment.startTick);
                         const endSeconds = project.midi.header.ticksToSeconds(segment.startTick + segment.durationTicks);
                         return (
-                          <span
-                            className="track-segment"
+                          <div
+                            className={`track-segment ${selectedRegion?.trackId === track.id && selectedRegion.segmentId === segment.id ? "selected" : ""}`}
                             key={segment.id}
-                            title="在轨道区使用 Mac 触控板捏合伸缩"
+                            title="点击选择；拖动中间平移；拖动两侧 Trim"
+                            aria-selected={selectedRegion?.trackId === track.id && selectedRegion.segmentId === segment.id}
+                            onPointerDown={(event) => beginRegionGesture(event, track.id, segment, "move")}
+                            onPointerMove={moveRegionGesture}
+                            onPointerUp={finishRegionGesture}
+                            onPointerCancel={finishRegionGesture}
                             style={{
                               left: `${timelinePercent(startSeconds)}%`,
                               width: `${Math.max(0.25, ((endSeconds - startSeconds) / visibleDuration) * 100)}%`,
                               borderColor: timbreColor,
                               background: timbreColor,
                             }}
-                          />
+                          >
+                            {selectedRegion?.trackId === track.id && selectedRegion.segmentId === segment.id && (
+                              <>
+                                <button
+                                  className="region-handle start"
+                                  aria-label="Trim Region 开头"
+                                  onPointerDown={(event) => beginRegionGesture(event, track.id, segment, "trim-start")}
+                                  onPointerMove={moveRegionGesture}
+                                  onPointerUp={finishRegionGesture}
+                                  onPointerCancel={finishRegionGesture}
+                                />
+                                <span className="region-move-label">MOVE</span>
+                                <button
+                                  className="region-handle end"
+                                  aria-label="Trim Region 结尾"
+                                  onPointerDown={(event) => beginRegionGesture(event, track.id, segment, "trim-end")}
+                                  onPointerMove={moveRegionGesture}
+                                  onPointerUp={finishRegionGesture}
+                                  onPointerCancel={finishRegionGesture}
+                                />
+                              </>
+                            )}
+                          </div>
                         );
                       })}
                       {track.source.notes.slice(0, 900).map((note, noteIndex) => (
