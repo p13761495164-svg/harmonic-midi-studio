@@ -86,6 +86,13 @@ type TrackSegment = {
   durationTicks: number;
 };
 
+type MidiNote = Track["notes"][number];
+
+type PianoRollTarget = {
+  trackId: number;
+  segmentId: string;
+};
+
 type RegionGesture = {
   pointerId: number;
   trackId: number;
@@ -126,13 +133,15 @@ type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effec
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-const APP_VERSION = "2026.07.30.5";
+const APP_VERSION = "2026.08.01.1";
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
 const GM_FAMILY_IDS = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass", "reed", "pipe", "synth lead", "synth pad", "synth effects", "ethnic", "percussive", "sound effects"];
 const eventRegionIds = new WeakMap<object, string>();
+const pianoRollNoteIds = new WeakMap<object, string>();
 let splitRegionSequence = 1;
+let pianoRollNoteSequence = 1;
 const HISTORY_LIMIT = 30;
 const PRACTICE_CATEGORIES: { id: PracticeCategory; label: string; detail: string }[] = [
   { id: "melody", label: "旋律", detail: "主旋律、独奏、歌唱线" },
@@ -170,6 +179,29 @@ function initialSegments(source: Track, trackId: number): TrackSegment[] {
 
 function belongsToRegion(event: object, regionId: string) {
   return eventRegionIds.get(event) === regionId;
+}
+
+function pianoRollNoteId(note: object) {
+  const existing = pianoRollNoteIds.get(note);
+  if (existing) return existing;
+  const id = `piano-note-${pianoRollNoteSequence++}`;
+  pianoRollNoteIds.set(note, id);
+  return id;
+}
+
+function keyPitchClass(key: string) {
+  const normalized = key.replace("♭", "b").replace("♯", "#");
+  const roots: Record<string, number> = {
+    C: 0, "C#": 1, Db: 1, D: 2, "D#": 3, Eb: 3, E: 4, Fb: 4,
+    "E#": 5, F: 5, "F#": 6, Gb: 6, G: 7, "G#": 8, Ab: 8,
+    A: 9, "A#": 10, Bb: 10, B: 11, Cb: 11,
+  };
+  return roots[normalized] ?? 0;
+}
+
+function degreeForMidi(midi: number, key: string) {
+  const degrees = ["1", "♭2", "2", "♭3", "3", "4", "♭5", "5", "♭6", "6", "♭7", "7"];
+  return degrees[(midi - keyPitchClass(key) + 120) % 12];
 }
 
 function regionsOverlap(startTick: number, durationTicks: number, segment: TrackSegment) {
@@ -568,6 +600,372 @@ function instrumentLabel(track: Track) {
   return track.instrument.name;
 }
 
+function midiPitchLabel(midi: number) {
+  return `${PITCH_CLASS_NAMES[(midi + 120) % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+function PianoRollEditorView({
+  project,
+  track,
+  segment,
+  timbreColor,
+  onClose,
+  onDeleteNotes,
+  onTransposeNotes,
+  onPlayNote,
+  onStopVoices,
+}: {
+  project: MidiProject;
+  track: UiTrack;
+  segment: TrackSegment;
+  timbreColor: string;
+  onClose: () => void;
+  onDeleteNotes: (notes: MidiNote[]) => void;
+  onTransposeNotes: (notes: MidiNote[], semitones: number) => void;
+  onPlayNote: (note: MidiNote, delay: number) => void;
+  onStopVoices: () => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [zoom, setZoom] = useState(1);
+  const [isPlayingRegion, setIsPlayingRegion] = useState(false);
+  const [playTick, setPlayTick] = useState(segment.startTick);
+  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [dragSemitones, setDragSemitones] = useState(0);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(zoom);
+  const playbackAnimationRef = useRef(0);
+  const playbackStartTimeRef = useRef(0);
+  const noteDragRef = useRef<{ pointerId: number; startY: number; noteIds: string[] } | null>(null);
+  const dragSemitonesRef = useRef(0);
+  const boxDragRef = useRef<{ pointerId: number; startX: number; startY: number; clientX: number; clientY: number; additive: boolean } | null>(null);
+  const segmentEndTick = segment.startTick + segment.durationTicks;
+  const notesWithIds = track.source.notes
+    .filter((note) => belongsToRegion(note, segment.id))
+    .map((note) => ({ note, id: pianoRollNoteId(note) }))
+    .sort((a, b) => a.note.ticks - b.note.ticks || b.note.midi - a.note.midi);
+  const pitches = notesWithIds.map(({ note }) => note.midi);
+  const minimumPitch = Math.max(0, Math.min(...(pitches.length ? pitches : [60])) - 3);
+  const maximumPitch = Math.min(127, Math.max(...(pitches.length ? pitches : [72])) + 3);
+  const pitchRows = Array.from({ length: maximumPitch - minimumPitch + 1 }, (_, index) => maximumPitch - index);
+  const gridHeight = pitchRows.length * 24;
+  const activeEditorKey = currentKey(project, project.midi.header.ticksToSeconds(playTick));
+  const regionRulerMarks = buildRulerMarks(project.midi).filter((mark) => mark.ticks >= segment.startTick && mark.ticks <= segmentEndTick);
+
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  const stopRegionPlayback = useCallback(() => {
+    cancelAnimationFrame(playbackAnimationRef.current);
+    setIsPlayingRegion(false);
+    onStopVoices();
+  }, [onStopVoices]);
+
+  useEffect(() => () => {
+    cancelAnimationFrame(playbackAnimationRef.current);
+    onStopVoices();
+  }, [onStopVoices]);
+
+  const startRegionPlayback = useCallback(() => {
+    cancelAnimationFrame(playbackAnimationRef.current);
+    onStopVoices();
+    const requestedTick = playTick >= segmentEndTick - 1 ? segment.startTick : Math.max(segment.startTick, playTick);
+    const requestedSeconds = project.midi.header.ticksToSeconds(requestedTick);
+    const endSeconds = project.midi.header.ticksToSeconds(segmentEndTick);
+    notesWithIds.forEach(({ note }) => {
+      if (note.ticks >= requestedTick && note.ticks < segmentEndTick) {
+        onPlayNote(note, Math.max(0, note.time - requestedSeconds));
+      }
+    });
+    playbackStartTimeRef.current = performance.now();
+    setPlayTick(requestedTick);
+    setIsPlayingRegion(true);
+    const frame = () => {
+      const seconds = requestedSeconds + (performance.now() - playbackStartTimeRef.current) / 1000;
+      if (seconds >= endSeconds) {
+        setPlayTick(segmentEndTick);
+        setIsPlayingRegion(false);
+        onStopVoices();
+        return;
+      }
+      setPlayTick(Math.max(requestedTick, Math.min(segmentEndTick, project.midi.header.secondsToTicks(seconds))));
+      playbackAnimationRef.current = requestAnimationFrame(frame);
+    };
+    playbackAnimationRef.current = requestAnimationFrame(frame);
+  }, [notesWithIds, onPlayNote, onStopVoices, playTick, project.midi.header, segment.startTick, segmentEndTick]);
+
+  const selectedNotes = () => notesWithIds.filter(({ id }) => selectedIds.has(id)).map(({ note }) => note);
+  const deleteSelectedNotes = () => {
+    const targets = selectedNotes();
+    if (!targets.length) return;
+    onDeleteNotes(targets);
+    setSelectedIds(new Set());
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        stopRegionPlayback();
+        onClose();
+      } else if (event.code === "Space") {
+        event.preventDefault();
+        if (isPlayingRegion) stopRegionPlayback(); else startRegionPlayback();
+      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.size) {
+        event.preventDefault();
+        deleteSelectedNotes();
+      } else if (event.key === "ArrowUp" && selectedIds.size) {
+        event.preventDefault();
+        onTransposeNotes(selectedNotes(), 1);
+      } else if (event.key === "ArrowDown" && selectedIds.size) {
+        event.preventDefault();
+        onTransposeNotes(selectedNotes(), -1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isPlayingRegion, onClose, onDeleteNotes, onTransposeNotes, selectedIds, startRegionPlayback, stopRegionPlayback]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    let safariGesture: { zoom: number; anchorRatio: number; clientX: number } | null = null;
+    const applyZoom = (nextZoom: number, clientX: number, anchorRatio?: number) => {
+      const rect = viewport.getBoundingClientRect();
+      const localX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      const ratio = anchorRatio ?? ((viewport.scrollLeft + localX) / Math.max(1, viewport.scrollWidth));
+      zoomRef.current = nextZoom;
+      setZoom(nextZoom);
+      requestAnimationFrame(() => {
+        viewport.scrollLeft = Math.max(0, ratio * viewport.scrollWidth - localX);
+      });
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const delta = Math.max(-80, Math.min(80, event.deltaY));
+      const nextZoom = Number(Math.max(1, Math.min(12, zoomRef.current * Math.exp(-delta * 0.004))).toFixed(4));
+      applyZoom(nextZoom, event.clientX);
+    };
+    const onGestureStart = (event: Event) => {
+      const gesture = event as Event & { clientX?: number };
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = viewport.getBoundingClientRect();
+      const clientX = typeof gesture.clientX === "number" ? gesture.clientX : rect.left + rect.width / 2;
+      const localX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      safariGesture = {
+        zoom: zoomRef.current,
+        anchorRatio: (viewport.scrollLeft + localX) / Math.max(1, viewport.scrollWidth),
+        clientX,
+      };
+    };
+    const onGestureChange = (event: Event) => {
+      if (!safariGesture) return;
+      const gesture = event as Event & { scale?: number };
+      event.preventDefault();
+      event.stopPropagation();
+      const scale = typeof gesture.scale === "number" ? gesture.scale : 1;
+      const nextZoom = Number(Math.max(1, Math.min(12, safariGesture.zoom * scale)).toFixed(4));
+      applyZoom(nextZoom, safariGesture.clientX, safariGesture.anchorRatio);
+    };
+    const onGestureEnd = (event: Event) => {
+      if (!safariGesture) return;
+      event.preventDefault();
+      event.stopPropagation();
+      safariGesture = null;
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    viewport.addEventListener("gesturestart", onGestureStart, { passive: false });
+    viewport.addEventListener("gesturechange", onGestureChange, { passive: false });
+    viewport.addEventListener("gestureend", onGestureEnd, { passive: false });
+    return () => {
+      viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener("gesturestart", onGestureStart);
+      viewport.removeEventListener("gesturechange", onGestureChange);
+      viewport.removeEventListener("gestureend", onGestureEnd);
+    };
+  }, []);
+
+  const beginNoteDrag = (event: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    let nextSelection = new Set(selectedIds);
+    if (event.shiftKey || event.metaKey || event.ctrlKey) {
+      if (nextSelection.has(id)) nextSelection.delete(id); else nextSelection.add(id);
+    } else if (!nextSelection.has(id)) {
+      nextSelection = new Set([id]);
+    }
+    setSelectedIds(nextSelection);
+    if (!nextSelection.has(id)) return;
+    noteDragRef.current = { pointerId: event.pointerId, startY: event.clientY, noteIds: [...nextSelection] };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveNoteDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (noteDragRef.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const nextSemitones = Math.round((noteDragRef.current.startY - event.clientY) / 24);
+    dragSemitonesRef.current = nextSemitones;
+    setDragSemitones(nextSemitones);
+  };
+
+  const finishNoteDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = noteDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    noteDragRef.current = null;
+    if (dragSemitonesRef.current) {
+      const draggedNotes = notesWithIds.filter(({ id }) => drag.noteIds.includes(id)).map(({ note }) => note);
+      onTransposeNotes(draggedNotes, dragSemitonesRef.current);
+    }
+    dragSemitonesRef.current = 0;
+    setDragSemitones(0);
+  };
+
+  const beginBoxSelection = (event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.target as Element).closest(".piano-roll-note")) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    boxDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      additive: event.shiftKey || event.metaKey || event.ctrlKey,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectionBox({ x: event.clientX - rect.left, y: event.clientY - rect.top, width: 0, height: 0 });
+  };
+
+  const moveBoxSelection = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = boxDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.clientX = event.clientX;
+    drag.clientY = event.clientY;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSelectionBox({
+      x: Math.min(drag.startX, event.clientX) - rect.left,
+      y: Math.min(drag.startY, event.clientY) - rect.top,
+      width: Math.abs(event.clientX - drag.startX),
+      height: Math.abs(event.clientY - drag.startY),
+    });
+  };
+
+  const finishBoxSelection = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = boxDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    boxDragRef.current = null;
+    const moved = Math.abs(drag.clientX - drag.startX) > 4 || Math.abs(drag.clientY - drag.startY) > 4;
+    if (!moved) {
+      if (!drag.additive) setSelectedIds(new Set());
+      setSelectionBox(null);
+      return;
+    }
+    const selection = {
+      left: Math.min(drag.startX, drag.clientX),
+      right: Math.max(drag.startX, drag.clientX),
+      top: Math.min(drag.startY, drag.clientY),
+      bottom: Math.max(drag.startY, drag.clientY),
+    };
+    const selected = drag.additive ? new Set(selectedIds) : new Set<string>();
+    event.currentTarget.querySelectorAll<HTMLElement>("[data-piano-note]").forEach((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.right >= selection.left && rect.left <= selection.right && rect.bottom >= selection.top && rect.top <= selection.bottom) {
+        const id = element.dataset.pianoNote;
+        if (id) selected.add(id);
+      }
+    });
+    setSelectedIds(selected);
+    setSelectionBox(null);
+  };
+
+  const closeEditor = () => {
+    stopRegionPlayback();
+    onClose();
+  };
+
+  return (
+    <div className="piano-roll-backdrop" role="dialog" aria-modal="true" aria-labelledby="piano-roll-title">
+      <section className="piano-roll-editor">
+        <header className="piano-roll-header">
+          <div className="piano-roll-title">
+            <button onClick={closeEditor} aria-label="返回主轨道页面">← 返回</button>
+            <div><strong id="piano-roll-title">{track.displayName}</strong><span>REGION · {regionRulerMarks.filter((mark) => mark.kind === "measure").length || 1} 小节 · Key = {activeEditorKey.key}</span></div>
+          </div>
+          <div className="piano-roll-actions">
+            <span>已选 {selectedIds.size} 个音符</span>
+            <button disabled={!selectedIds.size} onClick={() => onTransposeNotes(selectedNotes(), -1)}>↓ 半音</button>
+            <button disabled={!selectedIds.size} onClick={() => onTransposeNotes(selectedNotes(), 1)}>↑ 半音</button>
+            <button className="delete" disabled={!selectedIds.size} onClick={deleteSelectedNotes}>删除</button>
+            <button className="play" onClick={() => isPlayingRegion ? stopRegionPlayback() : startRegionPlayback()}>{isPlayingRegion ? "❚❚ 暂停" : "▶ 播放"}</button>
+          </div>
+        </header>
+        <div className="piano-roll-help"><span>单击选择 · Shift 多选 · 空白处拖拽框选 · 拖动音符上下移调</span><span>捏合／⌘滚轮横向伸缩 · 双指左右滚动</span></div>
+        <div className="piano-roll-viewport" ref={viewportRef}>
+          <div className="piano-roll-content" style={{ width: `${zoom * 100}%` }}>
+            <div className="piano-roll-corner">音高</div>
+            <div className="piano-roll-ruler" onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+              stopRegionPlayback();
+              setPlayTick(segment.startTick + ratio * segment.durationTicks);
+            }}>
+              {regionRulerMarks.map((mark, index) => (
+                <i className={mark.kind} key={`${mark.ticks}-${index}`} style={{ left: `${((mark.ticks - segment.startTick) / segment.durationTicks) * 100}%` }}>{mark.label && <b>{mark.label}</b>}</i>
+              ))}
+            </div>
+            <div className="piano-roll-keyboard" style={{ height: `${gridHeight}px` }} aria-hidden="true">
+              {pitchRows.map((pitch) => <span className={[1, 3, 6, 8, 10].includes(pitch % 12) ? "black" : ""} key={pitch}>{midiPitchLabel(pitch)}</span>)}
+            </div>
+            <div
+              className="piano-roll-grid"
+              style={{ height: `${gridHeight}px` }}
+              onPointerDown={beginBoxSelection}
+              onPointerMove={moveBoxSelection}
+              onPointerUp={finishBoxSelection}
+              onPointerCancel={finishBoxSelection}
+            >
+              {notesWithIds.map(({ note, id }) => {
+                const noteStart = Math.max(segment.startTick, note.ticks);
+                const noteEnd = Math.min(segmentEndTick, note.ticks + note.durationTicks);
+                const key = currentKey(project, project.midi.header.ticksToSeconds(note.ticks));
+                const selected = selectedIds.has(id);
+                return (
+                  <button
+                    className={`piano-roll-note ${selected ? "selected" : ""}`}
+                    data-piano-note={id}
+                    aria-pressed={selected}
+                    aria-label={`${midiPitchLabel(note.midi)}，级数 ${degreeForMidi(note.midi, key.key)}`}
+                    key={id}
+                    onPointerDown={(event) => beginNoteDrag(event, id)}
+                    onPointerMove={moveNoteDrag}
+                    onPointerUp={finishNoteDrag}
+                    onPointerCancel={finishNoteDrag}
+                    style={{
+                      left: `${((noteStart - segment.startTick) / segment.durationTicks) * 100}%`,
+                      width: `${Math.max(0.2, ((noteEnd - noteStart) / segment.durationTicks) * 100)}%`,
+                      top: `${(maximumPitch - note.midi) * 24 + 3}px`,
+                      background: timbreColor,
+                      transform: selected && dragSemitones ? `translateY(${-dragSemitones * 24}px)` : undefined,
+                    }}
+                  >
+                    <span>{degreeForMidi(note.midi + (selected ? dragSemitones : 0), key.key)}</span>
+                  </button>
+                );
+              })}
+              <i className="piano-roll-playhead" style={{ left: `${((playTick - segment.startTick) / segment.durationTicks) * 100}%` }} />
+              {selectionBox && <i className="piano-roll-selection-box" style={selectionBox} />}
+            </div>
+          </div>
+        </div>
+        <footer className="piano-roll-footer"><span>播放范围：当前 Region</span><span>横向伸缩 {zoom.toFixed(2)}×</span><span>Delete 删除 · ↑↓ 移调 · Esc 返回</span></footer>
+      </section>
+    </div>
+  );
+}
+
 export default function Home() {
   const [project, setProject] = useState<MidiProject | null>(null);
   const [position, setPosition] = useState(0);
@@ -597,6 +995,7 @@ export default function Home() {
   const [timbrePickerTrackId, setTimbrePickerTrackId] = useState<number | null>(null);
   const [timbrePickerFavoritesOnly, setTimbrePickerFavoritesOnly] = useState(false);
   const [timbrePickerQuery, setTimbrePickerQuery] = useState("");
+  const [pianoRollTarget, setPianoRollTarget] = useState<PianoRollTarget | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const trackListRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<AudioGraph | null>(null);
@@ -1211,6 +1610,51 @@ export default function Home() {
     notify({ text: "Region 已删除" });
   }
 
+  function openPianoRoll(trackId: number, segmentId: string) {
+    if (!project) return;
+    const track = project.tracks.find((item) => item.id === trackId);
+    const segment = track?.segments.find((item) => item.id === segmentId);
+    if (!track || !segment) return;
+    pause();
+    setSelectedRegion(null);
+    setPianoRollTarget({ trackId, segmentId });
+  }
+
+  function deletePianoRollNotes(trackId: number, segmentId: string, notes: MidiNote[]) {
+    if (!project || !notes.length) return;
+    const track = project.tracks.find((item) => item.id === trackId);
+    if (!track) return;
+    const targets = new Set(notes.filter((note) => belongsToRegion(note, segmentId)));
+    if (!targets.size) return;
+    pushUndoSnapshot();
+    stopVoices();
+    for (let index = track.source.notes.length - 1; index >= 0; index -= 1) {
+      if (targets.has(track.source.notes[index])) track.source.notes.splice(index, 1);
+    }
+    project.midi.header.update();
+    scheduledRef.current.clear();
+    setProject({ ...project, tracks: project.tracks.map((item) => item.id === trackId ? { ...item } : item) });
+    notify({ text: `已删除 ${targets.size} 个音符` });
+  }
+
+  function transposePianoRollNotes(trackId: number, segmentId: string, notes: MidiNote[], semitones: number) {
+    if (!project || !notes.length || !semitones) return;
+    const track = project.tracks.find((item) => item.id === trackId);
+    if (!track) return;
+    const targets = notes.filter((note) => belongsToRegion(note, segmentId));
+    if (!targets.length) return;
+    const minimum = Math.min(...targets.map((note) => note.midi));
+    const maximum = Math.max(...targets.map((note) => note.midi));
+    const boundedSemitones = Math.max(-minimum, Math.min(127 - maximum, semitones));
+    if (!boundedSemitones) return;
+    pushUndoSnapshot();
+    stopVoices();
+    targets.forEach((note) => { note.midi += boundedSemitones; });
+    scheduledRef.current.clear();
+    setProject({ ...project, tracks: project.tracks.map((item) => item.id === trackId ? { ...item } : item) });
+    notify({ text: `${targets.length} 个音符已${boundedSemitones > 0 ? "上移" : "下移"} ${Math.abs(boundedSemitones)} 个半音` });
+  }
+
   function splitRegionAtPlayhead(trackId: number, segmentId: string) {
     if (!project) return;
     const track = project.tracks.find((item) => item.id === trackId);
@@ -1423,17 +1867,18 @@ export default function Home() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (pianoRollTarget) return;
       if (event.code !== "Space" || event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
       event.preventDefault();
       if (isPlaying) pause(); else play();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isPlaying, pause, play]);
+  }, [isPlaying, pause, pianoRollTarget, play]);
 
   useEffect(() => {
     const onRegionShortcut = (event: KeyboardEvent) => {
-      if (!selectedRegion) return;
+      if (!selectedRegion || pianoRollTarget) return;
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
       if (event.shiftKey && event.code === "KeyT") {
         event.preventDefault();
@@ -1445,7 +1890,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onRegionShortcut);
     return () => window.removeEventListener("keydown", onRegionShortcut);
-  }, [position, project, selectedRegion]);
+  }, [pianoRollTarget, position, project, selectedRegion]);
 
   useEffect(() => {
     const onHistoryShortcut = (event: KeyboardEvent) => {
@@ -1524,6 +1969,7 @@ export default function Home() {
       setTimelineZoom(1);
       setTimelineViewStart(0);
       setTimbrePickerTrackId(null);
+      setPianoRollTarget(null);
       setTrackTimbreOverrides({});
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法读取这个 MIDI 文件");
@@ -1798,6 +2244,10 @@ export default function Home() {
     ? null
     : project.midi.header.ticksToSeconds(trimGuideTick);
   const timbrePickerTrack = timbrePickerTrackId === null ? null : project?.tracks.find((track) => track.id === timbrePickerTrackId) ?? null;
+  const pianoRollTrack = pianoRollTarget === null ? null : project?.tracks.find((track) => track.id === pianoRollTarget.trackId) ?? null;
+  const pianoRollSegment = pianoRollTrack?.segments.find((segment) => segment.id === pianoRollTarget?.segmentId) ?? null;
+  const pianoRollProgram = pianoRollTrack ? trackTimbreOverrides[pianoRollTrack.id] ?? pianoRollTrack.source.instrument.number : 0;
+  const pianoRollColor = pianoRollTrack ? colorForTimbre(pianoRollProgram, trackTimbreOverrides[pianoRollTrack.id] === undefined && pianoRollTrack.source.instrument.percussion) : "#947cff";
   const pickerInstruments = cloudInstruments.filter((instrument) => {
     const query = timbrePickerQuery.trim().toLowerCase();
     const matchesQuery = !query || `${instrument.program + 1} ${instrument.name} ${instrument.family}`.toLowerCase().includes(query);
@@ -2078,8 +2528,13 @@ export default function Home() {
                           <div
                             className={`track-segment ${selectedRegion?.trackId === track.id && selectedRegion.segmentId === segment.id ? "selected" : ""}`}
                             key={segment.id}
-                            title="点击选择；拖动中间平移；拖动两侧 Trim"
+                            title="单击选择；双击打开 Piano Roll；拖动中间平移；拖动两侧 Trim"
                             aria-selected={selectedRegion?.trackId === track.id && selectedRegion.segmentId === segment.id}
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openPianoRoll(track.id, segment.id);
+                            }}
                             onPointerDown={(event) => beginRegionGesture(event, track.id, segment, "move")}
                             onPointerMove={moveRegionGesture}
                             onPointerUp={finishRegionGesture}
@@ -2187,6 +2642,19 @@ export default function Home() {
       )}
 
       <input ref={inputRef} className="visually-hidden" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" onChange={(event) => loadFile(event.target.files?.[0])} />
+      {project && pianoRollTrack && pianoRollSegment && (
+        <PianoRollEditorView
+          project={project}
+          track={pianoRollTrack}
+          segment={pianoRollSegment}
+          timbreColor={pianoRollColor}
+          onClose={() => { stopVoices(); setPianoRollTarget(null); }}
+          onDeleteNotes={(notes) => deletePianoRollNotes(pianoRollTrack.id, pianoRollSegment.id, notes)}
+          onTransposeNotes={(notes, semitones) => transposePianoRollNotes(pianoRollTrack.id, pianoRollSegment.id, notes, semitones)}
+          onPlayNote={(note, delay) => triggerNote(note, pianoRollTrack, delay)}
+          onStopVoices={stopVoices}
+        />
+      )}
       {timbrePickerTrack && (
         <div className="timbre-picker-backdrop" onMouseDown={() => setTimbrePickerTrackId(null)}>
           <aside className="timbre-picker" role="dialog" aria-modal="true" aria-labelledby="timbre-picker-title" onMouseDown={(event) => event.stopPropagation()}>
