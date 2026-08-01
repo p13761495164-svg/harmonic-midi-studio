@@ -133,7 +133,7 @@ type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effec
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-const APP_VERSION = "2026.08.01.1";
+const APP_VERSION = "2026.08.01.2";
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
@@ -612,6 +612,7 @@ function PianoRollEditorView({
   onClose,
   onDeleteNotes,
   onTransposeNotes,
+  onPrepareAudio,
   onPlayNote,
   onStopVoices,
 }: {
@@ -622,6 +623,7 @@ function PianoRollEditorView({
   onClose: () => void;
   onDeleteNotes: (notes: MidiNote[]) => void;
   onTransposeNotes: (notes: MidiNote[], semitones: number) => void;
+  onPrepareAudio: () => void;
   onPlayNote: (note: MidiNote, delay: number) => void;
   onStopVoices: () => void;
 }) {
@@ -629,12 +631,13 @@ function PianoRollEditorView({
   const [zoom, setZoom] = useState(1);
   const [isPlayingRegion, setIsPlayingRegion] = useState(false);
   const [playTick, setPlayTick] = useState(segment.startTick);
-  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [dragSemitones, setDragSemitones] = useState(0);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const zoomRef = useRef(zoom);
   const playbackAnimationRef = useRef(0);
   const playbackStartTimeRef = useRef(0);
+  const scheduledNoteIdsRef = useRef(new Set<string>());
   const noteDragRef = useRef<{ pointerId: number; startY: number; noteIds: string[] } | null>(null);
   const dragSemitonesRef = useRef(0);
   const boxDragRef = useRef<{ pointerId: number; startX: number; startY: number; clientX: number; clientY: number; additive: boolean } | null>(null);
@@ -655,6 +658,7 @@ function PianoRollEditorView({
 
   const stopRegionPlayback = useCallback(() => {
     cancelAnimationFrame(playbackAnimationRef.current);
+    scheduledNoteIdsRef.current.clear();
     setIsPlayingRegion(false);
     onStopVoices();
   }, [onStopVoices]);
@@ -667,14 +671,11 @@ function PianoRollEditorView({
   const startRegionPlayback = useCallback(() => {
     cancelAnimationFrame(playbackAnimationRef.current);
     onStopVoices();
+    onPrepareAudio();
+    scheduledNoteIdsRef.current.clear();
     const requestedTick = playTick >= segmentEndTick - 1 ? segment.startTick : Math.max(segment.startTick, playTick);
     const requestedSeconds = project.midi.header.ticksToSeconds(requestedTick);
     const endSeconds = project.midi.header.ticksToSeconds(segmentEndTick);
-    notesWithIds.forEach(({ note }) => {
-      if (note.ticks >= requestedTick && note.ticks < segmentEndTick) {
-        onPlayNote(note, Math.max(0, note.time - requestedSeconds));
-      }
-    });
     playbackStartTimeRef.current = performance.now();
     setPlayTick(requestedTick);
     setIsPlayingRegion(true);
@@ -686,11 +687,24 @@ function PianoRollEditorView({
         onStopVoices();
         return;
       }
+      const lookahead = 0.16;
+      notesWithIds.forEach(({ note, id }) => {
+        if (
+          !scheduledNoteIdsRef.current.has(id)
+          && note.ticks >= requestedTick
+          && note.ticks < segmentEndTick
+          && note.time >= seconds - 0.012
+          && note.time < seconds + lookahead
+        ) {
+          scheduledNoteIdsRef.current.add(id);
+          onPlayNote(note, Math.max(0, note.time - seconds));
+        }
+      });
       setPlayTick(Math.max(requestedTick, Math.min(segmentEndTick, project.midi.header.secondsToTicks(seconds))));
       playbackAnimationRef.current = requestAnimationFrame(frame);
     };
-    playbackAnimationRef.current = requestAnimationFrame(frame);
-  }, [notesWithIds, onPlayNote, onStopVoices, playTick, project.midi.header, segment.startTick, segmentEndTick]);
+    frame();
+  }, [notesWithIds, onPlayNote, onPrepareAudio, onStopVoices, playTick, project.midi.header, segment.startTick, segmentEndTick]);
 
   const selectedNotes = () => notesWithIds.filter(({ id }) => selectedIds.has(id)).map(({ note }) => note);
   const deleteSelectedNotes = () => {
@@ -836,7 +850,7 @@ function PianoRollEditorView({
       additive: event.shiftKey || event.metaKey || event.ctrlKey,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
-    setSelectionBox({ x: event.clientX - rect.left, y: event.clientY - rect.top, width: 0, height: 0 });
+    setSelectionBox({ left: event.clientX - rect.left, top: event.clientY - rect.top, width: 0, height: 0 });
   };
 
   const moveBoxSelection = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -846,8 +860,8 @@ function PianoRollEditorView({
     drag.clientY = event.clientY;
     const rect = event.currentTarget.getBoundingClientRect();
     setSelectionBox({
-      x: Math.min(drag.startX, event.clientX) - rect.left,
-      y: Math.min(drag.startY, event.clientY) - rect.top,
+      left: Math.min(drag.startX, event.clientX) - rect.left,
+      top: Math.min(drag.startY, event.clientY) - rect.top,
       width: Math.abs(event.clientX - drag.startX),
       height: Math.abs(event.clientY - drag.startY),
     });
@@ -2651,6 +2665,7 @@ export default function Home() {
           onClose={() => { stopVoices(); setPianoRollTarget(null); }}
           onDeleteNotes={(notes) => deletePianoRollNotes(pianoRollTrack.id, pianoRollSegment.id, notes)}
           onTransposeNotes={(notes, semitones) => transposePianoRollNotes(pianoRollTrack.id, pianoRollSegment.id, notes, semitones)}
+          onPrepareAudio={() => { ensureAudio(); }}
           onPlayNote={(note, delay) => triggerNote(note, pianoRollTrack, delay)}
           onStopVoices={stopVoices}
         />
