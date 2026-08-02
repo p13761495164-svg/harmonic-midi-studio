@@ -133,7 +133,7 @@ type PracticeCategory = "melody" | "harmony" | "bass" | "pad" | "drums" | "effec
 
 const KEYS = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"];
 const PITCH_CLASS_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-const APP_VERSION = "2026.08.01.2";
+const APP_VERSION = "2026.08.02.1";
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 const TIMBRE_STORAGE_KEY = "harmonic-midi-saved-timbres-v1";
@@ -609,7 +609,8 @@ function PianoRollEditorView({
   track,
   segment,
   timbreColor,
-  onClose,
+  onSave,
+  onCancel,
   onDeleteNotes,
   onTransposeNotes,
   onPrepareAudio,
@@ -620,7 +621,8 @@ function PianoRollEditorView({
   track: UiTrack;
   segment: TrackSegment;
   timbreColor: string;
-  onClose: () => void;
+  onSave: () => void;
+  onCancel: () => void;
   onDeleteNotes: (notes: MidiNote[]) => void;
   onTransposeNotes: (notes: MidiNote[], semitones: number) => void;
   onPrepareAudio: () => void;
@@ -720,7 +722,7 @@ function PianoRollEditorView({
       if (event.key === "Escape") {
         event.preventDefault();
         stopRegionPlayback();
-        onClose();
+        onCancel();
       } else if (event.code === "Space") {
         event.preventDefault();
         if (isPlayingRegion) stopRegionPlayback(); else startRegionPlayback();
@@ -737,7 +739,7 @@ function PianoRollEditorView({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isPlayingRegion, onClose, onDeleteNotes, onTransposeNotes, selectedIds, startRegionPlayback, stopRegionPlayback]);
+  }, [isPlayingRegion, onCancel, onDeleteNotes, onTransposeNotes, selectedIds, startRegionPlayback, stopRegionPlayback]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -895,9 +897,14 @@ function PianoRollEditorView({
     setSelectionBox(null);
   };
 
-  const closeEditor = () => {
+  const saveAndClose = () => {
     stopRegionPlayback();
-    onClose();
+    onSave();
+  };
+
+  const cancelAndClose = () => {
+    stopRegionPlayback();
+    onCancel();
   };
 
   return (
@@ -905,7 +912,6 @@ function PianoRollEditorView({
       <section className="piano-roll-editor">
         <header className="piano-roll-header">
           <div className="piano-roll-title">
-            <button onClick={closeEditor} aria-label="返回主轨道页面">← 返回</button>
             <div><strong id="piano-roll-title">{track.displayName}</strong><span>REGION · {regionRulerMarks.filter((mark) => mark.kind === "measure").length || 1} 小节 · Key = {activeEditorKey.key}</span></div>
           </div>
           <div className="piano-roll-actions">
@@ -914,6 +920,8 @@ function PianoRollEditorView({
             <button disabled={!selectedIds.size} onClick={() => onTransposeNotes(selectedNotes(), 1)}>↑ 半音</button>
             <button className="delete" disabled={!selectedIds.size} onClick={deleteSelectedNotes}>删除</button>
             <button className="play" onClick={() => isPlayingRegion ? stopRegionPlayback() : startRegionPlayback()}>{isPlayingRegion ? "❚❚ 暂停" : "▶ 播放"}</button>
+            <button className="cancel" onClick={cancelAndClose}>取消</button>
+            <button className="save" onClick={saveAndClose}>保存返回</button>
           </div>
         </header>
         <div className="piano-roll-help"><span>单击选择 · Shift 多选 · 空白处拖拽框选 · 拖动音符上下移调</span><span>捏合／⌘滚轮横向伸缩 · 双指左右滚动</span></div>
@@ -974,7 +982,7 @@ function PianoRollEditorView({
             </div>
           </div>
         </div>
-        <footer className="piano-roll-footer"><span>播放范围：当前 Region</span><span>横向伸缩 {zoom.toFixed(2)}×</span><span>Delete 删除 · ↑↓ 移调 · Esc 返回</span></footer>
+        <footer className="piano-roll-footer"><span>播放范围：当前 Region</span><span>横向伸缩 {zoom.toFixed(2)}×</span><span>Delete 删除 · ↑↓ 移调 · Esc 取消</span></footer>
       </section>
     </div>
   );
@@ -1025,6 +1033,11 @@ export default function Home() {
   const undoHistoryRef = useRef<EditorSnapshot[]>([]);
   const redoHistoryRef = useRef<EditorSnapshot[]>([]);
   const pendingRegionHistoryRef = useRef<EditorSnapshot | null>(null);
+  const pianoRollSessionRef = useRef<{
+    snapshot: EditorSnapshot;
+    undoHistory: EditorSnapshot[];
+    redoHistory: EditorSnapshot[];
+  } | null>(null);
 
   useEffect(() => { projectRef.current = project; }, [project]);
   useEffect(() => {
@@ -1629,9 +1642,35 @@ export default function Home() {
     const track = project.tracks.find((item) => item.id === trackId);
     const segment = track?.segments.find((item) => item.id === segmentId);
     if (!track || !segment) return;
+    const snapshot = captureEditorSnapshot();
+    if (!snapshot) return;
     pause();
+    pianoRollSessionRef.current = {
+      snapshot,
+      undoHistory: [...undoHistoryRef.current],
+      redoHistory: [...redoHistoryRef.current],
+    };
     setSelectedRegion(null);
     setPianoRollTarget({ trackId, segmentId });
+  }
+
+  function savePianoRoll() {
+    stopVoices();
+    pianoRollSessionRef.current = null;
+    setPianoRollTarget(null);
+    notify({ text: "Piano Roll 修改已保存" });
+  }
+
+  function cancelPianoRoll() {
+    const session = pianoRollSessionRef.current;
+    stopVoices();
+    pianoRollSessionRef.current = null;
+    setPianoRollTarget(null);
+    if (!session) return;
+    undoHistoryRef.current = session.undoHistory;
+    redoHistoryRef.current = session.redoHistory;
+    restoreEditorSnapshot(session.snapshot);
+    notify({ text: "已取消 Piano Roll 修改" });
   }
 
   function deletePianoRollNotes(trackId: number, segmentId: string, notes: MidiNote[]) {
@@ -2662,7 +2701,8 @@ export default function Home() {
           track={pianoRollTrack}
           segment={pianoRollSegment}
           timbreColor={pianoRollColor}
-          onClose={() => { stopVoices(); setPianoRollTarget(null); }}
+          onSave={savePianoRoll}
+          onCancel={cancelPianoRoll}
           onDeleteNotes={(notes) => deletePianoRollNotes(pianoRollTrack.id, pianoRollSegment.id, notes)}
           onTransposeNotes={(notes, semitones) => transposePianoRollNotes(pianoRollTrack.id, pianoRollSegment.id, notes, semitones)}
           onPrepareAudio={() => { ensureAudio(); }}

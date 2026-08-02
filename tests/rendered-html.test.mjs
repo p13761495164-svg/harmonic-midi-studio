@@ -143,7 +143,7 @@ test("ships the focused MIDI track player", async () => {
   assert.doesNotMatch(page, /aria-label="播放进度"/);
   assert.doesNotMatch(css, /\.transport-card|\.main-play|\.scrubber/);
   assert.match(page, /className="project-live-status"/);
-  assert.match(page, /APP_VERSION = "2026\.08\.01\.2"/);
+  assert.match(page, /APP_VERSION = "2026\.08\.02\.1"/);
   assert.match(page, /checkForUpdate/);
   assert.match(page, /cache: "no-store"/);
   assert.match(page, /new DOMParser\(\)/);
@@ -172,6 +172,12 @@ test("ships the focused MIDI track player", async () => {
   assert.match(page, /beginBoxSelection/);
   assert.match(page, /beginNoteDrag/);
   assert.match(page, /startRegionPlayback/);
+  assert.match(page, /pianoRollSessionRef/);
+  assert.match(page, /savePianoRoll/);
+  assert.match(page, /cancelPianoRoll/);
+  assert.match(page, /保存返回/);
+  assert.match(page, /已取消 Piano Roll 修改/);
+  assert.match(page, /Esc 取消/);
   assert.match(page, /scheduledNoteIdsRef/);
   assert.match(page, /onPrepareAudio/);
   assert.match(page, /const lookahead = 0\.16/);
